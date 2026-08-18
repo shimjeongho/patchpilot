@@ -1,0 +1,18 @@
+[project]
+name = "patchpilot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "shimjeongho", email = "shimjh0628@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+patchpilot = "patchpilot:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

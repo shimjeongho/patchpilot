@@ -62,7 +62,7 @@ Planner가 작성하는 **수정 허용 파일 목록은 Developer의 화이트�
 1. <단계> — <이 단계의 목적>
 
 ## 9. 검증 방법
-- 실행 명령: `python -m pytest sample-project/tests -q`
+- 실행 명령: `uv run pytest sample-project/tests -q`
 - <통과 판정 기준>
 
 ## 10. 예상 위험 요소

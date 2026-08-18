@@ -54,7 +54,7 @@ Agent는 명시적인 지시가 없는 한 Harness 설정 파일을 임의로 �
 4. 테스트 실행 명령어는 다음 하나로 통일합니다.
 
 ```bash
-python -m pytest sample-project/tests -q
+uv run pytest sample-project/tests -q
 ```
 
 5. 추측하지 않습니다. 실제로 읽은 코드와 실제 명령 실행 결과를 근거로 판단합니다.
@@ -212,7 +212,7 @@ if people <= 0:
 기본 테스트 명령어:
 
 ```bash
-python -m pytest sample-project/tests -q
+uv run pytest sample-project/tests -q
 ```
 
 테스트 규칙:
@@ -240,6 +240,8 @@ def test_split2():
 전체 테스트가 통과해야 합니다.
 
 Tester가 회귀 테스트를 추가할 때의 절차는 §21을 따릅니다.
+
+Python 실행 환경과 의존성 관리 규칙은 §24를 따릅니다.
 
 ---
 
@@ -564,7 +566,7 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 
 다음 항목은 아직 구현하지 않았으며 이후 단계에서 추가합니다.
 
-* [ ] `.claude/settings.json` — Tester/Reviewer의 Bash 허용 명령을 pytest 및 git 읽기 명령으로 제한
+* [ ] `.claude/settings.json` — Tester/Reviewer의 Bash 허용 명령을 `uv run pytest` 및 git 읽기 명령으로 제한
 * [ ] `PreToolUse` Hook — `sample-project/tests/` 하위 파일에 대한 Developer의 쓰기 차단
 * [ ] `PreToolUse` Hook — `plan.md`의 수정 허용 파일 목록 밖 쓰기 차단
 * [ ] `/patchpilot` 커맨드 — Orchestrator 실행 절차의 고정
@@ -572,11 +574,15 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 
 현재 단계에서는 위 제약을 도구 권한(`tools:`)과 각 Agent의 금지 사항으로 통제합니다.
 
-## Git 커밋 컨벤션
+---
+
+## 23. Git 커밋 컨벤션
 
 커밋 메시지는 다음 형식을 사용한다.
 
+```text
 <타입>: <한국어 작업 요약>
+```
 
 ### 타입
 
@@ -625,3 +631,52 @@ feat: 기능 추가
 fix: 버그 수정
 
 update files
+
+### 커밋 메시지 제안 규칙
+
+Orchestrator와 모든 Agent는 커밋 메시지를 제안하거나 작성할 때 항상 이 규칙을 따라 한국어로 작성합니다.
+
+`report.md`에 작업 결과를 요약하면서 커밋 메시지를 제안하는 경우에도 동일한 규칙을 적용합니다.
+
+여러 목적이 섞인 변경이라면 하나의 메시지로 합치지 말고 목적별로 나누어 제안합니다.
+
+---
+
+## 24. Python 실행 환경
+
+PatchPilot의 Python 환경은 `uv`로 관리합니다.
+
+### 의존성 관리
+
+* 패키지와 개발 의존성은 `pyproject.toml`과 `uv.lock`으로 관리합니다.
+* `requirements.txt` 방식은 사용하지 않습니다.
+* `.venv`는 uv가 관리하는 로컬 가상환경이며 Git에 커밋하지 않습니다.
+* 의존성을 추가해야 하는 경우 다음 명령을 사용합니다.
+
+```bash
+uv add <패키지>
+uv add --dev <패키지>
+```
+
+단, 의존성 추가는 §3-7에 따라 명시적으로 필요한 경우에만 수행합니다.
+
+### 실행 규칙
+
+* 테스트와 스크립트는 항상 `uv run`을 통해 실행합니다.
+* 사용자가 수동으로 `.venv`를 활성화하는 것을 전제로 하지 않습니다.
+* `uv run`은 필요한 경우 잠금 파일 기준으로 환경을 자동 동기화하므로 별도의 설치 단계를 가정하지 않습니다.
+
+다음 방식은 사용하지 않습니다.
+
+```text
+python -m pytest ...
+pip install ...
+source .venv/bin/activate
+.venv\Scripts\activate
+```
+
+### Agent별 주의사항
+
+* Developer는 의존성을 임의로 추가하지 않습니다. 필요하다고 판단되면 `change-log-N.md`에 사유만 기록하고 중단합니다. (§3-7)
+* Tester는 §10의 고정 명령어 외의 방식으로 테스트를 실행하지 않습니다.
+* `uv` 실행 자체가 실패하거나 환경 동기화가 불가능한 경우, 제품 코드 결함이 아니라 `ENVIRONMENT_ERROR`로 분류합니다. (§14, §20)

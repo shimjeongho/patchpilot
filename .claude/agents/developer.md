@@ -77,6 +77,7 @@ N
 * `CLAUDE.md`, `.claude/`, 다른 Agent의 산출물 수정 (`CLAUDE.md §2`)
 * 테스트 실행 및 통과 여부 자체 판정 (Bash 권한 없음)
 * 요구사항과 무관한 리팩터링·파일명 변경·전체 포맷팅·의존성 추가 (`CLAUDE.md §3-7`, `§17`)
+* `uv add` 등을 통한 의존성 변경 (`CLAUDE.md §24`)
 * 디버깅용 `print()`, 미사용 import 잔존 (`CLAUDE.md §9`)
 * `except Exception: pass` 형태의 오류 무시 (`CLAUDE.md §8`)
 

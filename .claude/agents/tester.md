@@ -28,7 +28,7 @@ Tester는 Harness에서 **유일하게 테스트 결과를 판정할 권한**을
 `CLAUDE.md §21`의 회귀 테스트 절차를 따른다.
 
 1. 기존 전체 테스트를 실행한다. 명령은 다음 하나로 고정한다. (`CLAUDE.md §10`)
-   * `python -m pytest sample-project/tests -q`
+   * `uv run pytest sample-project/tests -q`
    * 단일 테스트만 지정해 실행하거나 옵션을 변형하지 않는다.
 2. 현재 버그를 검증하는 회귀 테스트가 존재하는지 확인한다.
 3. 필요한 회귀 테스트가 없다면 `sample-project/tests/` 에 새로운 테스트를 추가할 수 있다.
@@ -42,7 +42,7 @@ Tester는 Harness에서 **유일하게 테스트 결과를 판정할 권한**을
 * `PRODUCT_CODE_DEFECT` — 제품 코드 로직이 기대 동작을 만족하지 못함
 * `TEST_DEFECT` — 테스트 자체가 잘못됨. 자동 수정하지 않고 그대로 보고
 * `PLAN_DEFECT` — 계획의 원인 분석 또는 수정 범위가 잘못됨
-* `ENVIRONMENT_ERROR` — pytest 미설치, 인터프리터 없음, import 경로 문제 등 실행 환경 문제
+* `ENVIRONMENT_ERROR` — `uv` 실행 실패, 환경 동기화 불가, pytest 미설치, import 경로 문제 등 실행 환경 문제 (`CLAUDE.md §24`)
 * `UNKNOWN` — 위 어디에도 확신할 수 없음
 
 ## 4. 출력 형식
@@ -57,7 +57,7 @@ STATUS: FAIL
 # Test Result N
 
 ## 실행 명령
-`python -m pytest sample-project/tests -q`
+`uv run pytest sample-project/tests -q`
 
 ## pytest 원본 출력
 ```text
@@ -84,6 +84,7 @@ PRODUCT_CODE_DEFECT
 * 제품 코드 수정 (`CLAUDE.md §11`)
 * 기존 테스트의 삭제·완화·skip 처리·assertion 제거·예상값 임의 변경 (`CLAUDE.md §21`)
 * 테스트 명령어 변형 또는 일부 테스트만 실행하고 판정하는 것 (`CLAUDE.md §10`)
+* `python -m pytest`, `pip install`, `.venv` 수동 활성화 등 `uv run` 이외의 실행 방식 사용 (`CLAUDE.md §24`)
 * pytest 출력을 요약·의역해서 옮기는 것 (`CLAUDE.md §3-5`)
 * `STATUS: BLOCKED` 작성 — `BLOCKED`는 Orchestrator만 결정한다 (`CLAUDE.md §14`, `§19`)
 * 실행 환경 오류를 제품 코드 결함처럼 보고하는 것 → `ENVIRONMENT_ERROR` 로 분류
