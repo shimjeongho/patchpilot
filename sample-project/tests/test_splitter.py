@@ -34,3 +34,20 @@ def test_split_raises_value_error_when_people_is_negative():
 def test_split_raises_value_error_when_amount_is_negative():
     with pytest.raises(ValueError):
         split_amount(-1, 3)
+
+
+def test_split_preserves_total_when_remainder_is_greater_than_one():
+    result = split_amount(10, 4)
+    assert sum(result) == 10
+
+
+def test_split_distributes_remainder_to_earlier_people_first():
+    assert split_amount(10000, 3) == [3334, 3333, 3333]
+
+
+def test_split_gives_entire_amount_to_single_person():
+    assert split_amount(10000, 1) == [10000]
+
+
+def test_split_returns_zero_for_everyone_when_amount_is_zero():
+    assert split_amount(0, 3) == [0, 0, 0]
