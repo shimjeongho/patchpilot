@@ -68,3 +68,18 @@ def test_settle_difference_between_people_is_at_most_one_unit():
 
 def test_settle_matches_plain_split_when_unit_is_one_won():
     assert settle_by_unit(10, 3, 1) == ([4, 3, 3], 0)
+
+
+def test_settle_keeps_change_below_unit_for_various_amounts_and_people():
+    cases = [
+        (1400, 4, 100),
+        (1000, 3, 100),
+        (1250, 4, 100),
+        (2350, 6, 50),
+        (999, 7, 10),
+        (10, 3, 1),
+        (50, 3, 100),
+    ]
+    for amount, people, unit in cases:
+        shares, change = settle_by_unit(amount, people, unit)
+        assert 0 <= change < unit, (amount, people, unit, shares, change)

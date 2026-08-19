@@ -23,8 +23,8 @@ def settle_by_unit(amount: int, people: int, unit: int) -> tuple[list[int], int]
     if amount < 0:
         raise ValueError(f"amount는 0 이상이어야 합니다. (입력값: {amount})")
 
-    # 모든 사람이 같은 개수를 부담할 수 있는 만큼만 단위를 배분한다.
-    total_units = amount // (unit * people) * people
+    # 청구 가능한 단위는 하나도 남기지 않고 배분해야 잔돈이 unit 미만으로 유지된다.
+    total_units = amount // unit
     unit_counts = allocate_units(total_units, people)
 
     shares = [unit_count * unit for unit_count in unit_counts]
