@@ -79,3 +79,35 @@ def test_reconcile_settles_every_balance_for_various_payment_combinations():
     for paid, expected_burden in cases:
         transfers = reconcile_payments(paid)
         assert apply_transfers(paid, transfers) == expected_burden, (paid, transfers)
+
+
+def test_reconcile_keeps_transfer_count_within_limit_for_various_payment_combinations():
+    cases = [
+        [9000, 0, 0],
+        [4000, 2000, 0, 0],
+        [6, 0, 0, 0],
+        [0, 1],
+        [10000, 0, 0],
+        [1, 2, 3],
+        [100, 0, 0, 0, 0],
+        [7, 0, 0],
+    ]
+    for paid in cases:
+        transfers = reconcile_payments(paid)
+        assert len(transfers) <= len(paid) - 1, (paid, transfers)
+
+
+def test_reconcile_excludes_zero_amount_transfer_for_various_payment_combinations():
+    cases = [
+        [9000, 0, 0],
+        [4000, 2000, 0, 0],
+        [6, 0, 0, 0],
+        [0, 1],
+        [10000, 0, 0],
+        [1, 2, 3],
+        [100, 0, 0, 0, 0],
+        [7, 0, 0],
+    ]
+    for paid in cases:
+        transfers = reconcile_payments(paid)
+        assert all(amount > 0 for _, _, amount in transfers), (paid, transfers)
