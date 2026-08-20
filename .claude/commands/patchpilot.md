@@ -146,6 +146,18 @@ N = retry_count + 1
 * Reviewer 지적으로 인한 재수정인 경우 추가 입력: `reports/<run-id>/review.md` 와 "Reviewer 지적사항 반영" 이라는 재수정 사유
 * 출력 파일 경로: `reports/<run-id>/change-log-N.md`
 
+### 3-1. 재수정 호출의 근거 인계 요건 (`N >= 2` 공통)
+
+Agent 간 인계는 파일로만 이루어지므로(`CLAUDE.md §12`), 재수정 프롬프트에는 다음을 **항상**
+명시한다. 특정 실패 원인이나 특정 실행에만 적용되는 규칙이 아니라 모든 Developer 재호출에
+공통으로 적용한다.
+
+1. 이전 `test-result-{N-1}.md` 와 이전 `change-log-{N-1}.md` 를 **반드시 읽는다.**
+2. 새 가설 또는 수정 근거를 `change-log-N.md` 에 기록한다. (`CLAUDE.md §16`)
+3. 근거로 사용한 **파일 이름과 그 파일에서 실제로 관측된 내용**(실패 테스트 이름, assertion
+   차이, pytest 집계 등)을 함께 남긴다. "이전 실패를 확인했다" 같은 문장만으로는 다음 단계가
+   무엇을 근거로 삼았는지 재구성할 수 없다.
+
 Developer가 끝나면 **직접 `reports/<run-id>/change-log-N.md` 를 Read 한다.**
 
 * 파일이 없다 → `BLOCKED` (사유: `DEVELOPER_NO_OUTPUT`)
@@ -207,7 +219,7 @@ Tester가 끝나면 **직접 `reports/<run-id>/test-result-N.md` 를 Read 한다
 1. `retry_count += 1` — 이번 실패가 예산 1회를 소비한다.
 2. §6 예산 판정을 적용한다. 예산이 소진됐으면 Developer를 **호출하지 않고** 즉시 `BLOCKED` (사유: `RETRY_BUDGET_EXCEEDED`).
 3. 예산이 남아 있으면 Developer를 다시 호출한다 (§3). 새 시도 번호는 `N = retry_count + 1`.
-4. Developer 프롬프트에 **이전 `test-result-{N-1}.md` 와 `change-log-{N-1}.md` 를 반드시 읽고 이전과 다른 가설로 수정하라** 고 명시한다. (`CLAUDE.md §16`)
+4. Developer 프롬프트에 **이전 `test-result-{N-1}.md` 와 `change-log-{N-1}.md` 를 반드시 읽고 이전과 다른 가설로 수정하라** 고 명시하고, §3-1의 근거 인계 요건을 함께 전달한다. (`CLAUDE.md §16`)
 
 ### PLAN_DEFECT
 

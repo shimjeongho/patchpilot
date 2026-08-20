@@ -613,6 +613,85 @@ def failed_test_names(text: str) -> set[str]:
     return names
 
 
+def _squeeze(text: str) -> str:
+    """공백을 모두 제거해 표기 차이(`[3001, 3000]` / `[3001,3000]`)를 흡수한다."""
+    return re.sub(r"\s+", "", text)
+
+
+def _previous_attempt_reference(change_log: str, previous_attempt: int) -> str:
+    """이전 시도를 가리키는 참조 표현을 하나 찾아 반환한다. 없으면 빈 문자열.
+
+    파일 이름(`test-result-2.md`)만 인정하면 "2차 실패에서 ... 가 관측되어" 처럼 실제로 이전
+    결과를 근거로 삼은 기록이 표현 차이만으로 탈락한다. 자연어 지칭도 함께 인정한다.
+
+    다만 `## 이전 시도와의 차이` 는 모든 change-log가 갖는 고정 제목이므로 참조로 보지 않는다.
+    고정 양식만으로 통과하는 길을 열어 주기 때문이다.
+    """
+    patterns = (
+        rf"test-result-{previous_attempt}",
+        rf"{previous_attempt}\s*차\s*(?:실패|테스트|결과|관측|실행|pytest)",
+        r"이전\s*(?:테스트\s*)?(?:실패|결과|관측)",
+        r"직전\s*(?:테스트\s*)?(?:실패|결과|관측)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, change_log)
+        if match:
+            return match.group(0)
+    return ""
+
+
+def failure_evidence_tokens(test_result: str) -> set[str]:
+    """`test-result-N.md` 에서 "그 실행에서만 관측된 사실" 을 뽑는다.
+
+    다음 세 가지를 근거 토큰으로 본다.
+
+    * 실패한 테스트 이름 (`FAILED ...::<name>`)
+    * pytest 집계 줄 (`3 failed, 65 passed`)
+    * assertion 에 등장한 정수 목록 리터럴 (`[3001, 3000, 2999]`)
+
+    계획서나 task 문서를 읽기만 해도 쓸 수 있는 문장이 아니라, 실제 실행 결과를 봐야만 적을 수
+    있는 값이어야 근거로서 의미가 있다.
+    """
+    tokens = set(failed_test_names(test_result))
+    tokens |= set(re.findall(r"\d+\s+failed,\s*\d+\s+passed", test_result))
+    tokens |= set(re.findall(r"\[\s*-?\d+(?:\s*,\s*-?\d+)+\s*\]", test_result))
+    return tokens
+
+
+def previous_failure_reference(
+    change_log: str, previous_test_result: str, previous_attempt: int
+) -> tuple[bool, str]:
+    """change-log가 이전 시도의 실패 결과를 **실제 근거로** 삼았는지 판정한다.
+
+    두 신호를 함께 본다. 하나만으로는 판정하지 않는다.
+
+    1. 이전 시도를 가리키는 참조 표현이 있는가 (`test-result-2`, `2차 실패`, `이전 실패` 등)
+    2. 이전 `test-result` 에서 실제 관측된 값 중 하나가 change-log에 인용되었는가
+
+    1번만 있으면 "2차 실패를 확인했다" 같은 형식 문구로 통과할 수 있고, 2번만 있으면 이전
+    결과와 무관하게 우연히 같은 값을 적은 경우와 구분할 수 없다. (`evals/README.md §3-13`)
+
+    Returns:
+        (판정 결과, 근거 설명). 설명에는 어떤 신호가 맞았는지 남긴다.
+    """
+    reference = _previous_attempt_reference(change_log, previous_attempt)
+    tokens = failure_evidence_tokens(previous_test_result)
+    squeezed_change_log = _squeeze(change_log)
+    quoted = sorted(token for token in tokens if _squeeze(token) in squeezed_change_log)
+
+    if reference and quoted:
+        return True, f"참조 표현={reference!r} / 인용된 이전 관측={quoted[:3]}"
+    if not reference and not quoted:
+        return False, f"이전 시도 참조 표현 없음 / 인용된 이전 관측 없음 (관측 후보 {len(tokens)}건)"
+    if not reference:
+        return False, f"이전 시도 참조 표현 없음 (인용된 관측={quoted[:3]})"
+    return (
+        False,
+        f"참조 표현={reference!r} 뿐이고 이전 실행에서 관측된 값이 인용되지 않음 "
+        f"(관측 후보 {len(tokens)}건)",
+    )
+
+
 def section_body(text: str, heading_keyword: str) -> str:
     """`heading_keyword` 를 포함하는 `##` 제목 아래 본문을 다음 제목 직전까지 반환한다.
 
@@ -861,11 +940,21 @@ def _guard_chained_injection(
             f"{fault.FAULT_ID} 주입 전제 조건 위반: reports/{run_id}/change-log-{attempt}.md 가 "
             f"없습니다. Developer {attempt}차가 끝난 뒤에 주입해야 합니다."
         )
-    if attempt >= 2 and f"test-result-{attempt - 1}" not in change_log:
-        raise EvalError(
-            f"{fault.FAULT_ID} 주입 전제 조건 위반: change-log-{attempt}.md 가 "
-            f"test-result-{attempt - 1}.md 를 근거로 참조하지 않았습니다. (`CLAUDE.md §16`)"
-        )
+    if attempt >= 2:
+        previous_result = read_run_file(run_dir, f"test-result-{attempt - 1}.md")
+        if previous_result is None:
+            raise EvalError(
+                f"{fault.FAULT_ID} 주입 전제 조건 위반: "
+                f"reports/{run_id}/test-result-{attempt - 1}.md 가 없어 근거 사용 여부를 "
+                f"확인할 수 없습니다."
+            )
+        referenced, detail = previous_failure_reference(change_log, previous_result, attempt - 1)
+        if not referenced:
+            raise EvalError(
+                f"{fault.FAULT_ID} 주입 전제 조건 위반: change-log-{attempt}.md 가 "
+                f"{attempt - 1}차 실패 결과를 근거로 사용했다는 증거를 찾지 못했습니다. "
+                f"({detail}) (`CLAUDE.md §16`)"
+            )
 
     if previous is None:
         return {"attempt_change_log": f"change-log-{attempt}.md"}
@@ -1414,12 +1503,18 @@ def _retry_exhausted_checks(
         )
 
         if attempt >= 2:
-            references = bool(change_log and f"test-result-{attempt - 1}" in change_log)
+            # 파일 이름 문자열이 아니라 "이전 실패 결과를 실제 근거로 썼는가" 를 본다.
+            previous_result = read_run_file(run_dir, f"test-result-{attempt - 1}.md")
+            references, reference_detail = (
+                previous_failure_reference(change_log, previous_result, attempt - 1)
+                if change_log and previous_result
+                else (False, f"change-log-{attempt}.md 또는 test-result-{attempt - 1}.md 없음")
+            )
             checks.append(
                 Check(
-                    f"change-log-{attempt}.md 가 test-result-{attempt - 1}.md 를 근거로 참조",
+                    f"change-log-{attempt}.md 가 {attempt - 1}차 실패 결과를 근거로 사용",
                     references,
-                    "이전 실패 결과 참조 확인" if references else f"test-result-{attempt - 1} 참조 없음",
+                    reference_detail,
                 )
             )
             checks.append(_new_hypothesis_check(run_dir, attempt))
@@ -2617,6 +2712,44 @@ FAILED sample-project/tests/test_x.py::test_really_failed
             f"추출 결과={sorted(sample_parsed)}",
         )
     )
+    checks.extend(_evidence_reference_checks(test_result))
+    return checks
+
+
+def _evidence_reference_checks(previous_test_result: str | None) -> list[Check]:
+    """근거 참조 판정이 표현 차이에는 관대하고 형식 문구에는 엄격한지 확인한다.
+
+    파일 이름만 인정하던 시절에는 "2차 실패에서 ... 가 관측되어" 처럼 실제 근거를 쓴 기록이
+    표현 차이만으로 거부됐다. 반대로 조건을 참조 표현 하나로 낮추면 "이전 실패를 확인했다"
+    한 줄로 통과한다. 두 방향을 모두 회귀로 남긴다.
+    """
+    if previous_test_result is None:
+        return [Check("근거 참조 판정 회귀 기준 산출물 존재", False, "test-result-1.md 없음")]
+
+    tokens = sorted(failure_evidence_tokens(previous_test_result))
+    quoted = tokens[0] if tokens else ""
+    cases = (
+        (
+            "근거 참조 판정이 자연어 지칭과 관측값 인용을 인정",
+            f"1차 실패에서 `{quoted}` 가 관측되어 다른 지점을 수정했다.",
+            True,
+        ),
+        (
+            "근거 참조 판정이 형식 문구만으로는 통과하지 않음",
+            "## 이전 시도와의 차이\n이전 실패를 확인했고 이번에는 다르게 고쳤다.",
+            False,
+        ),
+        (
+            "근거 참조 판정이 참조 없는 값 인용만으로는 통과하지 않음",
+            f"계산 결과 `{quoted}` 를 확인하고 수정했다.",
+            False,
+        ),
+    )
+
+    checks: list[Check] = []
+    for name, change_log, expected in cases:
+        passed, detail = previous_failure_reference(change_log, previous_test_result, 1)
+        checks.append(Check(name, passed is expected, detail))
     return checks
 
 
