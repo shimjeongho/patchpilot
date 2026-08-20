@@ -411,9 +411,21 @@ Developer와 Tester의 반복은 최대 3회까지만 허용합니다.
 
 재시도 예산은 실행 전체에서 하나로 공유합니다.
 
-* Developer 재수정 1회 = 예산 1회 소비
-* Planner 재계획(`PLAN_DEFECT`) 1회 = 예산 1회 소비
-* Reviewer의 `CHANGES_REQUESTED`로 인한 재수정 = 예산 1회 소비
+`retry_count`는 **예산을 소비한 실패 시도 수**입니다. 남은 재시도 횟수가 아닙니다.
+
+예산을 소비하는 실패가 발생하면 먼저 `retry_count`를 1 증가시키고, 그 값을 `retry_budget`과 비교합니다.
+
+* `retry_count >= retry_budget` → 추가 Agent 재호출 없이 `BLOCKED`로 종료 (사유: `RETRY_BUDGET_EXCEEDED`)
+* `retry_count < retry_budget` → 실패 원인 분류에 따라 다음 Agent를 재호출
+
+따라서 `retry_budget`이 3이면 Developer → Tester 반복은 **최대 3회**이며, 세 번째 실패 시점에 종료합니다.
+
+예산 소비 기준은 다음과 같습니다.
+
+* `PRODUCT_CODE_DEFECT`로 인한 실패 1회 = 예산 1회 소비
+* `PLAN_DEFECT`로 인한 실패 1회 = 예산 1회 소비
+* `UNKNOWN`으로 인한 실패 1회 = 예산 1회 소비 (1회에 한함)
+* Reviewer의 `CHANGES_REQUESTED` 1회 = 예산 1회 소비
 * `ENVIRONMENT_ERROR`는 예산을 소비하지 않고 즉시 종료
 
 같은 실패 방법을 근거 없이 반복하지 않습니다.

@@ -28,7 +28,16 @@
     -> ENVIRONMENT_ERROR -> 재시도 예산 미소비(retry_count = 0)
     -> Planner 2차 / Developer 2차 / Tester 2차 / Reviewer 미호출 -> BLOCKED
 
-세 시나리오는 setup/inject/assert/teardown 골격을 공유하고, 달라지는 값만 `Scenario` 에 모은다.
+`harness-eval-004` (RETRY_BUDGET_EXCEEDED 예산 소진 종료):
+
+    Planner -> Developer 1차 -> Fault Injection(결함 B) -> Tester FAIL
+    -> PRODUCT_CODE_DEFECT -> retry_count = 1 -> Developer 2차(B 제거)
+    -> Fault Injection(결함 C) -> Tester FAIL -> PRODUCT_CODE_DEFECT -> retry_count = 2
+    -> Developer 3차(C 제거) -> Fault Injection(결함 D) -> Tester FAIL
+    -> PRODUCT_CODE_DEFECT -> retry_count = 3 = retry_budget
+    -> Developer 4차 / Tester 4차 / Reviewer 미호출 -> BLOCKED
+
+네 시나리오는 setup/inject/assert/teardown 골격을 공유하고, 달라지는 값만 `Scenario` 에 모은다.
 
 사용법은 `evals/README.md` 를 따른다.
 """
@@ -86,6 +95,22 @@ BLOCKED_PROMOTED_FILES = (
     "state.json",
 )
 
+# 재시도 예산을 모두 소비하고 종료되는 시나리오의 승격 대상.
+# 시도 3회분 산출물은 모두 있어야 하고, Reviewer 산출물은 없는 것이 정상이다.
+RETRY_EXHAUSTED_PROMOTED_FILES = (
+    "fault-injection-1.md",
+    "change-log-1.md",
+    "test-result-1.md",
+    "fault-injection-2.md",
+    "change-log-2.md",
+    "test-result-2.md",
+    "fault-injection-3.md",
+    "change-log-3.md",
+    "test-result-3.md",
+    "report.md",
+    "state.json",
+)
+
 # 대표 결과에 함께 복사하면 좋지만 없어도 승격을 막지는 않는 산출물.
 OPTIONAL_PROMOTED_FILES = ["plan.md", "eval-result.md"]
 
@@ -94,6 +119,7 @@ PYTEST_COMMAND = "uv run pytest sample-project/tests -q"
 # 시나리오가 검증하는 종료 형태.
 OUTCOME_SUCCESS_AFTER_RETRY = "SUCCESS_AFTER_RETRY"  # 재시도 후 SUCCESS 로 끝난다.
 OUTCOME_BLOCKED = "BLOCKED"  # 재시도하지 않고 즉시 BLOCKED 로 끝난다.
+OUTCOME_RETRY_EXHAUSTED = "BLOCKED_AFTER_RETRIES"  # 재시도 예산을 모두 쓰고 BLOCKED 로 끝난다.
 
 # 결함 유형. 제품 코드에 문자열을 주입하는 방식과 설치된 리소스를 삭제하는 방식을 구분한다.
 FAULT_KIND_CODE_INJECTION = "code_injection"
@@ -134,11 +160,19 @@ class Scenario:
     expected_failing_token: str
     # `eval-result.md` 에 기록할 검증 대상 전이.
     transition: str
-    # 검증 대상 종료 형태. 재시도 후 성공하거나, 재시도 없이 즉시 종료한다.
+    # 검증 대상 종료 형태. 재시도 후 성공하거나, 즉시 종료하거나, 예산을 모두 쓰고 종료한다.
     outcome: str = OUTCOME_SUCCESS_AFTER_RETRY
     # Orchestrator가 `state.json` 에 기록해야 하는 재시도 횟수와 시도 기록 개수.
     expected_retry_count: int = 1
     expected_attempts: int = 2
+    # 시도마다 순서대로 주입할 결함 목록. 비어 있으면 `fault` 하나만 1회 주입한다.
+    # 같은 결함을 반복 주입하지 않으므로 항목은 서로 달라야 한다. (`evals/README.md §3-12`)
+    fault_sequence: tuple[str, ...] = field(default_factory=tuple)
+    # 시도마다 `test-result-N.md` 에 새로 나타나야 하는 실패 테스트 이름.
+    # N번째 값은 N번째 시도에만 있어야 하고 그 이전 시도에는 없어야 한다.
+    expected_failing_tokens: tuple[str, ...] = field(default_factory=tuple)
+    # 예산 소진 시나리오에서 `state.json` 에 기록되어야 하는 재시도 예산. (`CLAUDE.md §16`)
+    expected_retry_budget: int = 3
     # 즉시 종료 시나리오에서 기록되어야 하는 사유 코드. (`patchpilot.md §10`)
     expected_blocked_reason: str = ""
     # 즉시 종료 시나리오에서 존재하면 안 되는 산출물. (파일명, 호출되지 않아야 하는 주체)
@@ -160,6 +194,23 @@ class Scenario:
     def expected_final_status(self) -> str:
         """`state.json` 의 `final_status` 기대값. (`CLAUDE.md §19`)"""
         return "SUCCESS" if self.outcome == OUTCOME_SUCCESS_AFTER_RETRY else "BLOCKED"
+
+    @property
+    def fault_ids(self) -> tuple[str, ...]:
+        """이 시나리오가 시도 순서대로 주입하는 결함 목록."""
+        return self.fault_sequence or (self.fault,)
+
+    @property
+    def is_chained(self) -> bool:
+        """시도마다 다른 결함을 연쇄로 주입하는 시나리오인지 여부."""
+        return len(self.fault_ids) > 1
+
+    def fault_report_name(self, attempt: int) -> str:
+        """N번째 주입 기록 파일 이름.
+
+        단일 주입 시나리오는 기존 이름(`fault-injection.md`)을 그대로 쓴다.
+        """
+        return f"fault-injection-{attempt}.md" if self.is_chained else "fault-injection.md"
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -234,6 +285,47 @@ SCENARIOS: dict[str, Scenario] = {
         # Planner 2차가 호출되지 않았다는 것을 plan.md 해시 비교로 판정하기 위해 스냅샷만 남긴다.
         snapshot_plan=True,
         promoted_files=BLOCKED_PROMOTED_FILES,
+        extra_promoted_files=("plan-1.md",),
+    ),
+    "harness-eval-004": Scenario(
+        scenario_id="harness-eval-004",
+        task="evals/fixtures/HARNESS-EVAL-004.md",
+        # 시도마다 다른 결함을 주입한다. `fault` 는 1차 결함이고 나머지는 `fault_sequence` 에 있다.
+        fault="retry_budget_001",
+        installs=(
+            ("installment.py", "sample-project/src/expense/installment.py"),
+            ("test_installment.py", "sample-project/tests/test_installment.py"),
+        ),
+        expected_category="PRODUCT_CODE_DEFECT",
+        expected_failing_token="test_installment",
+        transition=(
+            "Planner -> Developer 1차 -> Fault Injection(결함 B) -> Tester FAIL\n"
+            "-> PRODUCT_CODE_DEFECT -> retry_count = 1 -> Developer 2차(B 제거)\n"
+            "-> Fault Injection(결함 C) -> Tester FAIL -> PRODUCT_CODE_DEFECT -> retry_count = 2\n"
+            "-> Developer 3차(C 제거) -> Fault Injection(결함 D) -> Tester FAIL\n"
+            "-> PRODUCT_CODE_DEFECT -> retry_count = 3 = retry_budget\n"
+            "-> Developer 4차 / Tester 4차 / Reviewer 미호출 -> BLOCKED"
+        ),
+        outcome=OUTCOME_RETRY_EXHAUSTED,
+        expected_retry_count=3,
+        expected_attempts=3,
+        fault_sequence=("retry_budget_001", "retry_budget_002", "retry_budget_003"),
+        expected_failing_tokens=(
+            "test_split_installments_distributes_remainder_to_earlier_months_first",
+            "test_split_installments_difference_between_installments_is_at_most_one_won",
+            "test_split_installments_preserves_total_when_total_is_not_evenly_divisible",
+        ),
+        expected_retry_budget=3,
+        expected_blocked_reason="RETRY_BUDGET_EXCEEDED",
+        forbidden_artifacts=(
+            ("change-log-4.md", "Developer 4차"),
+            ("test-result-4.md", "Tester 4차"),
+            ("fault-injection-4.md", "4차 결함 주입"),
+            ("review.md", "Reviewer"),
+        ),
+        # Planner 재호출 판정용 기준선. `PRODUCT_CODE_DEFECT` 경로는 Planner를 부르지 않는다.
+        snapshot_plan=True,
+        promoted_files=RETRY_EXHAUSTED_PROMOTED_FILES,
         extra_promoted_files=("plan-1.md",),
     ),
 }
@@ -354,6 +446,36 @@ def sample_project_status() -> list[str]:
     """sample-project 하위의 git 변경 상태를 정렬된 줄 목록으로 반환한다."""
     output = run_git("status", "--porcelain", "--", "sample-project")
     return sorted(line for line in output.splitlines() if line.strip())
+
+
+def pytest_baseline() -> dict:
+    """고정 명령으로 전체 테스트를 실행하고 요약 줄과 종료 코드를 반환한다.
+
+    eval fixture를 설치하기 전과 teardown 이후를 비교해, 실행이 끝난 뒤 `sample-project` 가
+    코드 상태뿐 아니라 **테스트 결과까지** 원래대로 돌아왔는지 확인하기 위한 기준선이다.
+    PASS/FAIL 판정 권한을 가진 Tester의 실행(`CLAUDE.md §10`)과는 목적이 다르다.
+    """
+    completed = subprocess.run(
+        PYTEST_COMMAND.split(),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return {
+        "summary": _pytest_summary_line(completed.stdout),
+        "returncode": completed.returncode,
+    }
+
+
+def _pytest_summary_line(output: str) -> str:
+    """pytest 출력의 마지막 요약 줄에서 실행 시간을 뺀 부분을 반환한다.
+
+    실행 시간은 실행할 때마다 달라지므로 비교 대상에서 제외한다. (`57 passed in 0.06s` -> `57 passed`)
+    """
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return re.sub(r"\s+in\s+[\d.]+s.*$", "", lines[-1])
 
 
 def is_tracked(path: Path) -> bool:
@@ -559,6 +681,8 @@ def cmd_setup(scenario_id: str | None, task: str | None) -> int:
         raise EvalError(f"eval task 파일이 없습니다: {task}")
 
     snapshot = sample_project_status()
+    # fixture를 설치하기 전에 기준선을 잡는다. teardown 이후 이 결과로 돌아와야 한다.
+    baseline = pytest_baseline()
 
     installed: list[str] = []
     created_dirs: list[str] = []
@@ -581,9 +705,11 @@ def cmd_setup(scenario_id: str | None, task: str | None) -> int:
             "scenario": scenario.scenario_id,
             "task": task,
             "fault": None,
+            "injections": [],
             "installed": installed,
             "created_dirs": created_dirs,
             "snapshot": snapshot,
+            "pytest_baseline": baseline,
             "setup_at": now_text(),
         }
     )
@@ -596,6 +722,7 @@ def cmd_setup(scenario_id: str | None, task: str | None) -> int:
     for created in created_dirs:
         print(f"  생성   : {created}/ (teardown에서 제거)")
     print(f"  스냅샷 : sample-project 변경 {len(snapshot)}건")
+    print(f"  기준선 : {baseline['summary']} (teardown 후 이 결과로 복귀해야 한다)")
     print()
     print("다음 단계는 evals/README.md 의 실행 절차를 따르세요.")
     return 0
@@ -606,21 +733,17 @@ def cmd_setup(scenario_id: str | None, task: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def cmd_inject(run_id: str, fault_id: str | None) -> int:
+def cmd_inject(run_id: str, fault_id: str | None, attempt: int | None) -> int:
     state = load_state()
     scenario = scenario_of_state(state)
     run_dir = run_dir_of(run_id)
 
-    if state.get("fault"):
-        raise EvalError(
-            f"이미 결함이 주입되어 있습니다: {state['fault']['fault_id']} "
-            f"({state['fault']['injected_at']})"
-        )
-
-    fault = load_fault(fault_id or scenario.fault)
+    injections = list(state.get("injections") or [])
+    attempt = _resolve_attempt(scenario, state, injections, attempt)
+    fault = load_fault(fault_id or scenario.fault_ids[attempt - 1])
 
     plan_snapshot_note = ""
-    if scenario.snapshot_plan:
+    if scenario.snapshot_plan and attempt == 1:
         # Planner 1차 산출물을 여기서 고정한다. 지금이 plan v1이 확정된 마지막 시점이다.
         # (Developer 1차는 끝났고 Planner 2차는 아직 호출되지 않았다.)
         plan_text = read_run_file(run_dir, "plan.md")
@@ -629,25 +752,146 @@ def cmd_inject(run_id: str, fault_id: str | None) -> int:
         (run_dir / PLAN_SNAPSHOT_1).write_text(plan_text, encoding="utf-8")
         plan_snapshot_note = f"reports/{run_id}/{PLAN_SNAPSHOT_1}"
 
+    previous = injections[-1] if injections else None
+    evidence: dict = {}
+    if scenario.is_chained:
+        evidence = _guard_chained_injection(scenario, fault, run_dir, run_id, attempt, previous)
+
     if fault_kind_of(fault) == FAULT_KIND_RESOURCE_REMOVAL:
         record = _inject_resource_removal(fault, state, run_id)
         report = _resource_removal_report(fault, record)
     else:
-        record = _inject_code_fault(fault, run_dir, run_id)
-        report = _fault_injection_report(fault, record)
+        record = _inject_code_fault(fault, run_dir, run_id, attempt=attempt, evidence=evidence)
+        report = _fault_injection_report(fault, record, scenario)
 
+    injections.append(record)
+    state["injections"] = injections
+    # 단일 주입 시나리오의 기존 판정 경로가 그대로 읽을 수 있도록 최신 기록을 함께 둔다.
     state["fault"] = record
     save_state(state)
-    (run_dir / "fault-injection.md").write_text(report, encoding="utf-8")
+    report_name = scenario.fault_report_name(attempt)
+    (run_dir / report_name).write_text(report, encoding="utf-8")
 
-    print(f"결함 주입 완료: {fault.FAULT_ID} -> {fault.TARGET_PATH}")
-    print(f"기록 파일: reports/{run_id}/fault-injection.md")
+    print(f"결함 주입 완료: {fault.FAULT_ID} -> {fault.TARGET_PATH} (시도 {attempt})")
+    print(f"기록 파일: reports/{run_id}/{report_name}")
+    if evidence.get("previous_fault_id"):
+        print(f"직전 결함 제거 확인: {evidence['previous_fault_id']} 표식 없음 / 파일 내용 변경됨")
     if plan_snapshot_note:
         print(f"Planner 1차 스냅샷: {plan_snapshot_note}")
     return 0
 
 
-def _inject_code_fault(fault, run_dir: Path, run_id: str) -> dict:
+def _resolve_attempt(
+    scenario: Scenario, state: dict, injections: list[dict], attempt: int | None
+) -> int:
+    """이번 주입이 몇 번째 시도인지 확정한다.
+
+    연쇄 주입 시나리오에서는 `--attempt` 를 필수로 요구한다. 순서가 어긋난 실행이 조용히
+    다른 결함을 주입해 검증 대상 전이가 바뀌는 것을 막기 위해서다.
+    """
+    next_attempt = len(injections) + 1
+
+    if not scenario.is_chained:
+        already = state.get("fault")
+        if already or injections:
+            record = already or injections[-1]
+            raise EvalError(
+                f"이미 결함이 주입되어 있습니다: {record['fault_id']} ({record['injected_at']})"
+            )
+        if attempt not in (None, 1):
+            raise EvalError(
+                f"{scenario.scenario_id} 는 결함을 1회만 주입합니다. (요청: --attempt {attempt})"
+            )
+        return 1
+
+    if attempt is None:
+        raise EvalError(
+            f"{scenario.scenario_id} 는 시도마다 다른 결함을 주입합니다. "
+            f"`--attempt {next_attempt}` 를 지정하세요."
+        )
+    if attempt != next_attempt:
+        raise EvalError(
+            f"주입 순서가 맞지 않습니다. 다음 차례는 {next_attempt}차인데 {attempt}차가 "
+            f"요청되었습니다. (지금까지 주입: {[item['fault_id'] for item in injections]})"
+        )
+    if attempt > len(scenario.fault_ids):
+        raise EvalError(
+            f"{scenario.scenario_id} 에 정의된 결함은 {len(scenario.fault_ids)}개입니다. "
+            f"{attempt}차 주입은 정의되어 있지 않습니다."
+        )
+    return attempt
+
+
+def _guard_chained_injection(
+    scenario: Scenario,
+    fault,
+    run_dir: Path,
+    run_id: str,
+    attempt: int,
+    previous: dict | None,
+) -> dict:
+    """다음 결함을 주입해도 되는지 확인하고, 확인 결과를 주입 기록용 dict로 반환한다.
+
+    핵심은 **직전 결함이 Developer의 손으로 실제 제거되었는지** 다. 제거되지 않았는데 다음
+    결함을 얹으면 Developer가 아무것도 고치지 못해도 매번 FAIL이 나므로, eval이 조용히
+    통과한다. 전제가 깨지면 주입하지 않고 즉시 실패시킨다. (`evals/README.md §3-13`)
+    """
+    change_log = read_run_file(run_dir, f"change-log-{attempt}.md")
+    if change_log is None:
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: reports/{run_id}/change-log-{attempt}.md 가 "
+            f"없습니다. Developer {attempt}차가 끝난 뒤에 주입해야 합니다."
+        )
+    if attempt >= 2 and f"test-result-{attempt - 1}" not in change_log:
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: change-log-{attempt}.md 가 "
+            f"test-result-{attempt - 1}.md 를 근거로 참조하지 않았습니다. (`CLAUDE.md §16`)"
+        )
+
+    if previous is None:
+        return {"attempt_change_log": f"change-log-{attempt}.md"}
+
+    expected_previous = getattr(fault, "PREVIOUS_FAULT_ID", None)
+    if expected_previous != previous["fault_id"]:
+        raise EvalError(
+            f"{fault.FAULT_ID} 결함 정의의 PREVIOUS_FAULT_ID({expected_previous!r}) 가 실제 직전 "
+            f"주입 결함({previous['fault_id']!r})과 다릅니다."
+        )
+
+    previous_fault = load_fault(previous["fault_id"])
+    target = ROOT / previous["target"]
+    if not target.is_file():
+        raise EvalError(f"결함 주입 대상 파일이 없습니다: {previous['target']}")
+
+    source = target.read_text(encoding="utf-8")
+    if previous_fault.is_applied(source):
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: Developer {attempt}차가 직전 결함 "
+            f"{previous['fault_id']} 을(를) 제거하지 않았습니다. "
+            f"({previous['target']} 에 '{previous['marker']}' 표식이 남아 있습니다)"
+        )
+
+    current_sha = sha256_of(source)
+    if current_sha == previous["after_sha256"]:
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: {previous['target']} 의 내용이 직전 결함 주입 "
+            f"직후와 동일합니다. Developer {attempt}차가 제품 코드를 바꾸지 않았습니다."
+        )
+
+    return {
+        "attempt_change_log": f"change-log-{attempt}.md",
+        "previous_fault_id": previous["fault_id"],
+        "previous_marker": previous["marker"],
+        "previous_after_sha256": previous["after_sha256"],
+        "previous_marker_removed": True,
+        "previous_removed_sha256": current_sha,
+        "previous_removed_confirmed_at": now_text(),
+    }
+
+
+def _inject_code_fault(
+    fault, run_dir: Path, run_id: str, *, attempt: int = 1, evidence: dict | None = None
+) -> dict:
     """제품 코드에 결함 코드를 덧붙이고 주입 기록을 반환한다."""
     target = ROOT / fault.TARGET_PATH
     if not target.is_file():
@@ -676,11 +920,13 @@ def _inject_code_fault(fault, run_dir: Path, run_id: str) -> dict:
         "fault_id": fault.FAULT_ID,
         "run_id": run_id,
         "kind": FAULT_KIND_CODE_INJECTION,
+        "attempt": attempt,
         "target": fault.TARGET_PATH,
         "marker": fault.MARKER,
         "before_sha256": sha256_of(before),
         "after_sha256": sha256_of(after),
         "injected_at": now_text(),
+        **(evidence or {}),
     }
 
 
@@ -720,6 +966,7 @@ def _inject_resource_removal(fault, state: dict, run_id: str) -> dict:
         "fault_id": fault.FAULT_ID,
         "run_id": run_id,
         "kind": FAULT_KIND_RESOURCE_REMOVAL,
+        "attempt": 1,
         "target": target_path,
         "marker": fault.MARKER,
         "before_sha256": sha256_of(content or ""),
@@ -768,11 +1015,15 @@ def _guard_resource_removal(context: dict) -> None:
         )
 
 
-def _fault_injection_report(fault, record: dict) -> str:
+def _fault_injection_report(fault, record: dict, scenario: Scenario) -> str:
+    attempt = record.get("attempt", 1)
     return f"""# Fault Injection
 
 ## Fault ID
 {record["fault_id"]}
+
+## 시도 번호
+{attempt}
 
 ## 주입 시각
 {record["injected_at"]}
@@ -781,8 +1032,8 @@ def _fault_injection_report(fault, record: dict) -> str:
 `{record["target"]}`
 
 ## 주입 시점
-Developer 1차 수정 완료 직후, Tester 1차 실행 직전
-
+Developer {attempt}차 수정 완료 직후, Tester {attempt}차 실행 직전
+{_previous_removal_section(record)}
 ## 주입 목적
 Harness의 재시도 상태 전이를 실제 pytest 실패로 검증하기 위해 제품 코드에 결함을 만든다.
 `test-result-N.md` 의 문자열을 임의로 바꾸지 않고, Tester가 실제 실행 결과로 `STATUS: FAIL` 을
@@ -792,7 +1043,7 @@ Harness의 재시도 상태 전이를 실제 pytest 실패로 검증하기 위�
 {fault.DESCRIPTION}
 
 ## 주입 방식
-파일 끝에 후처리 래퍼를 덧붙인다. Developer 1차가 함수 본문을 어떻게 구현했는지와 무관하게
+파일 끝에 후처리 래퍼를 덧붙인다. Developer {attempt}차가 함수 본문을 어떻게 구현했는지와 무관하게
 모듈 최상위에 `{fault.ANCHOR}` 정의만 존재하면 동일하게 적용되므로 주입 결과가 결정론적이다.
 
 ## 주입된 코드
@@ -806,12 +1057,61 @@ Harness의 재시도 상태 전이를 실제 pytest 실패로 검증하기 위�
 | 주입 전 | `{record["before_sha256"]}` |
 | 주입 후 | `{record["after_sha256"]}` |
 
+{_removal_owner_section(record, scenario)}"""
+
+
+def _previous_removal_section(record: dict) -> str:
+    """직전 결함이 Developer의 손으로 제거되었는지 확인한 결과를 남긴다.
+
+    연쇄 주입 시나리오에서만 내용이 생긴다. 이 확인을 통과하지 못하면 결함이 주입되지 않으므로,
+    이 절이 존재한다는 것 자체가 직전 시도의 수정이 실재했다는 기록이다.
+    """
+    if not record.get("previous_fault_id"):
+        return ""
+
+    return f"""
+## 직전 결함 제거 확인
+| 항목 | 값 |
+| --- | --- |
+| 직전 결함 | `{record["previous_fault_id"]}` |
+| 표식 제거 | `{record["previous_marker"]}` 없음 |
+| 주입 직후 해시 | `{record["previous_after_sha256"]}` |
+| 제거 후 해시 | `{record["previous_removed_sha256"]}` |
+| 확인 시각 | {record["previous_removed_confirmed_at"]} |
+| 근거 산출물 | `{record["attempt_change_log"]}` |
+
+이 확인을 통과하지 못하면 이번 결함은 주입되지 않는다. Developer가 직전 결함을 그대로 둔 채
+다음 결함으로 실패가 이어지면, 재시도 루프가 실제로 동작했는지 판정할 수 없기 때문이다.
+"""
+
+
+def _removal_owner_section(record: dict, scenario: Scenario) -> str:
+    """이 결함을 누가 제거해야 하는지(또는 아무도 제거하지 않는지)를 남긴다."""
+    attempt = record.get("attempt", 1)
+    if scenario.is_chained and attempt >= len(scenario.fault_ids):
+        return f"""
 ## 제거 주체
-Developer 2차.
+없음.
+
+이 결함이 실패로 이어지는 순간 재시도 예산이 모두 소비되어 Developer {attempt + 1}차가 호출되지
+않는다. 따라서 이 결함은 종료 시점까지 제품 코드에 남아 있는 것이 정상이다. 남아 있다는 사실
+자체가 "예산 소진 이후 아무도 제품 코드를 건드리지 않았다" 는 증거가 된다.
+결함은 eval teardown이 fixture 파일과 함께 통째로 제거한다.
+
+## 잔존 확인 방법
+`{record["target"]}` 에 `{record["marker"]}` 표식이 남아 있고 파일 해시가 주입 직후
+(`{record["after_sha256"]}`)와 같은지 확인한다. `eval_harness.py assert` 가 이 항목을 자동으로
+판정한다.
+"""
+
+    return f"""
+## 제거 주체
+Developer {attempt + 1}차.
 
 Harness는 이 결함을 스스로 되돌리지 않는다. Harness가 자동으로 제거하면 재수정 주체가
-Developer가 아니게 되어 `FAIL -> 분석 -> 재수정 -> PASS` 전이의 검증 의미가 사라진다.
-Developer 2차는 `test-result-1.md` 를 근거로 이 결함을 제품 코드 결함으로 진단하고 제거해야 한다.
+Developer가 아니게 되어 `FAIL -> 분석 -> 재수정` 전이의 검증 의미가 사라진다.
+Developer {attempt + 1}차는 `test-result-{attempt}.md` 를 근거로 이 결함을 제품 코드 결함으로
+진단하고 제거해야 한다.
 
 ## 제거 확인 방법
 `{record["target"]}` 에서 `{record["marker"]}` 표식이 사라지고 파일 내용이 실제로 바뀌었는지
@@ -902,8 +1202,14 @@ def build_checks(
     이때 실행 환경에 의존하는 항목(결함 제거 여부, 테스트 약화 여부, git 상태)은 판정할 수
     없으므로 항목 이름과 순서만 유지하고 판정은 건너뛴다.
     """
-    checks: list[Check] = []
     state = state or {}
+
+    # 예산 소진 시나리오는 시도가 3회 반복되므로 판정 골격 자체가 다르다.
+    # 기존 시나리오의 항목 이름과 순서를 건드리지 않기 위해 별도 경로로 분기한다.
+    if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
+        return _retry_exhausted_checks(run_dir, scenario, state, offline=offline)
+
+    checks: list[Check] = []
 
     def check(name: str, passed: bool, detail: str) -> None:
         checks.append(Check(name, passed, detail))
@@ -1040,6 +1346,259 @@ def build_checks(
         checks.append(_blocked_report_check(report, scenario))
 
     return checks
+
+
+def _retry_exhausted_checks(
+    run_dir: Path, scenario: Scenario, state: dict, *, offline: bool
+) -> list[Check]:
+    """재시도 예산을 모두 소비하고 BLOCKED 로 끝나는 시나리오의 전이를 판정한다.
+
+    앞의 세 시나리오와 달리 시도가 여러 번 반복되므로, 시도마다 같은 항목 묶음을 반복해서
+    판정한다. 각 시도에서 확인하는 것은 세 가지다.
+
+    1. Developer가 직전 결함을 실제로 제거했는가 (주입 시점에 남긴 해시·표식 기록)
+    2. 그 뒤 새로 주입된 결함으로 Tester가 실제 실행 결과 FAIL을 기록했는가
+    3. 그 실패가 이전 시도와 **다른 증상** 인가 (같은 실패의 반복이 아님)
+
+    마지막에는 반대로 **일어나지 않아야 하는 일** 을 확인한다. 예산이 소진된 뒤에는
+    Developer 4차 / Tester 4차 / 4차 결함 주입 / Reviewer가 모두 없어야 한다.
+    """
+    checks: list[Check] = []
+    injections = list(state.get("injections") or [])
+    total_attempts = scenario.expected_attempts
+
+    plan = read_run_file(run_dir, "plan.md")
+    checks.append(
+        Check("plan.md 존재", bool(plan and plan.strip()), "Planner 실행됨" if plan else "plan.md 없음")
+    )
+    plan_1 = read_run_file(run_dir, PLAN_SNAPSHOT_1)
+    checks.append(
+        Check(
+            "plan-1.md 스냅샷 존재",
+            bool(plan_1 and plan_1.strip()),
+            "Planner 1차 산출물 보존됨" if plan_1 else f"{PLAN_SNAPSHOT_1} 없음",
+        )
+    )
+
+    previous_results: list[str] = []
+    for attempt in range(1, total_attempts + 1):
+        change_log = read_run_file(run_dir, f"change-log-{attempt}.md")
+        checks.append(
+            Check(
+                f"change-log-{attempt}.md 존재",
+                bool(change_log and change_log.strip()),
+                f"Developer {attempt}차 실행됨" if change_log else f"change-log-{attempt}.md 없음",
+            )
+        )
+
+        if attempt >= 2:
+            references = bool(change_log and f"test-result-{attempt - 1}" in change_log)
+            checks.append(
+                Check(
+                    f"change-log-{attempt}.md 가 test-result-{attempt - 1}.md 를 근거로 참조",
+                    references,
+                    "이전 실패 결과 참조 확인" if references else f"test-result-{attempt - 1} 참조 없음",
+                )
+            )
+            checks.append(_new_hypothesis_check(run_dir, attempt))
+            checks.append(
+                _previous_fault_removed_check(injections, attempt, offline=offline)
+            )
+
+        report_name = scenario.fault_report_name(attempt)
+        fault_report = read_run_file(run_dir, report_name)
+        record = injections[attempt - 1] if len(injections) >= attempt else None
+        checks.append(
+            Check(
+                f"{report_name} 존재",
+                bool(fault_report and (record or offline)),
+                f"fault_id={record['fault_id']}"
+                if record
+                else (f"{report_name} 존재" if offline and fault_report else "결함 주입 기록 없음"),
+            )
+        )
+        checks.append(
+            Check(
+                f"{attempt}차 결함 주입이 Developer {attempt}차 이후에 이루어짐",
+                bool((record or (offline and fault_report)) and change_log),
+                f"change-log-{attempt}.md 와 {report_name} 이(가) 모두 존재",
+            )
+        )
+
+        test_result = read_run_file(run_dir, f"test-result-{attempt}.md")
+        status_line = first_line(test_result) if test_result else ""
+        checks.append(
+            Check(
+                f"test-result-{attempt}.md 첫 줄이 STATUS: FAIL",
+                status_line == "STATUS: FAIL",
+                f"첫 줄: {status_line!r}" if test_result else f"test-result-{attempt}.md 없음",
+            )
+        )
+        has_command = bool(test_result and PYTEST_COMMAND in test_result)
+        checks.append(
+            Check(
+                f"test-result-{attempt}.md 에 고정 실행 명령 기록",
+                has_command,
+                f"`{PYTEST_COMMAND}` 기록됨" if has_command else "고정 실행 명령이 기록되지 않음",
+            )
+        )
+
+        token = (
+            scenario.expected_failing_tokens[attempt - 1]
+            if len(scenario.expected_failing_tokens) >= attempt
+            else scenario.expected_failing_token
+        )
+        mentions = bool(test_result and token in test_result)
+        checks.append(
+            Check(
+                f"test-result-{attempt}.md 가 {attempt}차 주입 결함의 실패 테스트를 기록",
+                mentions,
+                f"{token} 실패가 기록됨" if mentions else f"{token} 실패 기록 없음",
+            )
+        )
+        if attempt >= 2:
+            # 같은 실패가 반복된 것이 아니라 새 결함으로 인한 새 실패인지 확인한다.
+            repeated = [
+                index + 1 for index, earlier in enumerate(previous_results) if token in earlier
+            ]
+            checks.append(
+                Check(
+                    f"{attempt}차 실패 증상이 이전 시도와 다름",
+                    mentions and not repeated,
+                    f"{token} 이(가) 이전 시도에도 기록됨: {repeated}차"
+                    if repeated
+                    else f"{token} 은(는) {attempt}차에서 처음 실패",
+                )
+            )
+        previous_results.append(test_result or "")
+
+        category = section_value(test_result, "실패 원인 분류") if test_result else ""
+        checks.append(
+            Check(
+                f"{attempt}차 실패 원인 분류가 {scenario.expected_category}",
+                category == scenario.expected_category,
+                f"분류: {category!r}"
+                + ("" if not category or category in FAILURE_CATEGORIES else " (정의되지 않은 값)"),
+            )
+        )
+
+    # 여기서부터는 **일어나지 않아야 하는 일** 을 판정한다.
+    unchanged = bool(plan and plan_1 and sha256_of(plan) == sha256_of(plan_1))
+    checks.append(
+        Check(
+            "Planner 2차가 호출되지 않음",
+            unchanged,
+            "plan.md 가 1차 주입 시점 스냅샷과 동일"
+            if unchanged
+            else f"plan-1 sha={sha256_of(plan_1)[:12] if plan_1 else None} / "
+            f"plan sha={sha256_of(plan)[:12] if plan else None}",
+        )
+    )
+    for artifact, actor in scenario.forbidden_artifacts:
+        content = read_run_file(run_dir, artifact)
+        # 결함 주입은 Agent 호출이 아니므로 항목 이름을 구분해 쓴다.
+        name = (
+            f"{actor}이 이루어지지 않음"
+            if artifact.startswith("fault-injection")
+            else f"{actor}가 호출되지 않음"
+        )
+        extra_ok = offline or len(injections) == total_attempts
+        checks.append(
+            Check(
+                name,
+                content is None and extra_ok,
+                f"{artifact} 없음 / 주입 기록 {len(injections)}건"
+                if content is None
+                else f"{artifact} 존재 ({len(content)}자)",
+            )
+        )
+
+    checks.extend(_state_json_checks(run_dir, scenario))
+    checks.append(_last_fault_intact_check(injections, offline=offline))
+    checks.append(_test_not_weakened_check(scenario, offline=offline))
+    checks.append(_tracked_files_untouched_check(state, offline=offline))
+
+    report = read_run_file(run_dir, "report.md")
+    checks.append(
+        Check("report.md 존재", bool(report and report.strip()), "최종 보고서 존재" if report else "report.md 없음")
+    )
+    checks.append(_blocked_report_check(report, scenario))
+    return checks
+
+
+def _new_hypothesis_check(run_dir: Path, attempt: int) -> Check:
+    """재시도한 Developer가 이전과 다른 가설을 세웠는지 판정한다. (`CLAUDE.md §16`)"""
+    name = f"change-log-{attempt}.md 가 이전 시도와 다른 가설을 기록"
+    current = read_run_file(run_dir, f"change-log-{attempt}.md")
+    previous = read_run_file(run_dir, f"change-log-{attempt - 1}.md")
+    if not current or not previous:
+        return Check(name, False, "비교할 change-log 가 없습니다")
+
+    current_hypothesis = section_body(current, "수정 가설").strip()
+    previous_hypothesis = section_body(previous, "수정 가설").strip()
+    difference = section_body(current, "이전 시도와의 차이").strip()
+    changed = bool(current_hypothesis) and current_hypothesis != previous_hypothesis
+    described = bool(difference) and "최초 시도" not in difference
+    return Check(
+        name,
+        changed and described,
+        f"가설 변경={changed} / 이전 시도와의 차이 기록={described}",
+    )
+
+
+def _previous_fault_removed_check(
+    injections: list[dict], attempt: int, *, offline: bool = False
+) -> Check:
+    """직전 결함이 Developer의 손으로 제거되었는지 주입 시점 기록으로 판정한다.
+
+    이 판정의 근거는 `inject` 가 다음 결함을 주입하기 **직전에** 확인해 남긴 기록이다.
+    (표식 부재 + 파일 해시 변경) 확인을 통과하지 못하면 결함이 주입되지 않으므로, 기록이
+    존재한다는 것 자체가 제거가 실재했다는 뜻이다.
+    """
+    name = f"Developer {attempt}차가 {attempt - 1}차 주입 결함을 제거함"
+    if offline:
+        return Check(name, True, OFFLINE_SKIP_DETAIL)
+    if len(injections) < attempt:
+        return Check(name, False, f"{attempt}차 결함 주입 기록이 없어 판정 불가")
+
+    record = injections[attempt - 1]
+    previous = injections[attempt - 2]
+    marker_removed = bool(record.get("previous_marker_removed"))
+    linked = record.get("previous_after_sha256") == previous.get("after_sha256")
+    changed = record.get("previous_removed_sha256") not in (None, previous.get("after_sha256"))
+    return Check(
+        name,
+        marker_removed and linked and changed,
+        f"{previous.get('fault_id')} 표식 제거={marker_removed} / 직전 주입 해시 일치={linked} / "
+        f"파일 내용 변경={changed}",
+    )
+
+
+def _last_fault_intact_check(injections: list[dict], *, offline: bool = False) -> Check:
+    """마지막으로 주입된 결함이 그대로 남아 있는지 판정한다.
+
+    예산이 소진된 뒤에는 Developer가 호출되지 않으므로 이 결함을 제거할 주체가 없다.
+    결함이 사라졌다면 예산 소진 이후에도 누군가 제품 코드를 고쳤다는 뜻이다.
+    """
+    name = "마지막 주입 결함이 제거되지 않고 남아 있음"
+    if offline:
+        return Check(name, True, OFFLINE_SKIP_DETAIL)
+    if not injections:
+        return Check(name, False, "결함 주입 기록이 없어 판정 불가")
+
+    record = injections[-1]
+    target = ROOT / record["target"]
+    if not target.is_file():
+        return Check(name, False, f"대상 파일이 없습니다: {record['target']}")
+
+    source = target.read_text(encoding="utf-8")
+    marker_present = record["marker"] in source
+    same_hash = sha256_of(source) == record["after_sha256"]
+    return Check(
+        name,
+        marker_present and same_hash,
+        f"{record['fault_id']} 표식 유지={marker_present} / 주입 직후와 동일={same_hash}",
+    )
 
 
 def _fault_target_path(scenario: Scenario, fault_record: dict | None) -> str:
@@ -1276,6 +1835,18 @@ def _state_json_checks(run_dir: Path, scenario: Scenario) -> list[Check]:
         )
     )
 
+    if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
+        # 예산 소진 시나리오에서는 예산 자체가 판정 대상이다. retry_count 가 예산에 도달했다는
+        # 사실이 종료 사유(`RETRY_BUDGET_EXCEEDED`)의 근거이기 때문이다. (`CLAUDE.md §16`)
+        retry_budget = state_json.get("retry_budget")
+        checks.append(
+            Check(
+                f"state.json retry_budget == {scenario.expected_retry_budget}",
+                retry_budget == scenario.expected_retry_budget,
+                f"retry_budget={retry_budget!r}",
+            )
+        )
+
     final_status = state_json.get("final_status")
     checks.append(
         Check(
@@ -1295,7 +1866,7 @@ def _state_json_checks(run_dir: Path, scenario: Scenario) -> list[Check]:
     )
 
     blocked_reason = state_json.get("blocked_reason")
-    if scenario.outcome == OUTCOME_BLOCKED:
+    if scenario.outcome in (OUTCOME_BLOCKED, OUTCOME_RETRY_EXHAUSTED):
         checks.append(
             Check(
                 f"state.json blocked_reason == {scenario.expected_blocked_reason}",
@@ -1320,6 +1891,26 @@ def _state_json_checks(run_dir: Path, scenario: Scenario) -> list[Check]:
         return checks
 
     checks.append(Check(attempts_name, True, f"시도 {expected_attempts}회 기록됨"))
+
+    if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
+        # 예산 소진은 시도 전부가 같은 사유로 실패했을 때만 성립한다. 하나라도 다르면
+        # 다른 라우팅을 지나간 것이므로 검증 대상 전이가 아니다.
+        for index, attempt in enumerate(attempts):
+            checks.append(
+                Check(
+                    f"attempts[{index}] 이 FAIL / {scenario.expected_category}",
+                    attempt.get("status") == "FAIL"
+                    and attempt.get("failure_category") == scenario.expected_category,
+                    f"status={attempt.get('status')!r}, "
+                    f"failure_category={attempt.get('failure_category')!r}",
+                )
+            )
+        review = state_json.get("review")
+        verdict = review.get("verdict") if isinstance(review, dict) else review
+        checks.append(
+            Check("state.json review.verdict 없음", verdict in (None, ""), f"review={review!r}")
+        )
+        return checks
 
     first_attempt = attempts[0]
     checks.append(
@@ -1506,11 +2097,32 @@ def teardown() -> list[Check]:
         )
     )
 
+    checks.append(_pytest_baseline_check(state))
+
     STATE_FILE.unlink()
     if STATE_DIR.is_dir() and not any(STATE_DIR.iterdir()):
         STATE_DIR.rmdir()
 
     return checks
+
+
+def _pytest_baseline_check(state: dict) -> Check:
+    """복구 후 전체 테스트 결과가 setup 시점 기준선으로 돌아왔는지 판정한다.
+
+    `git status` 비교만으로는 "파일은 원래대로인데 테스트가 깨진" 상태를 잡지 못한다.
+    (예: eval이 설치한 모듈의 바이트코드 캐시가 남아 import 결과가 달라지는 경우)
+    """
+    name = "복구 후 기존 테스트 결과가 setup 시점과 동일"
+    baseline = state.get("pytest_baseline")
+    if not baseline:
+        return Check(name, False, "setup 시점 기준선 기록이 없습니다")
+
+    current = pytest_baseline()
+    return Check(
+        name,
+        current == baseline,
+        f"setup 시점={baseline.get('summary')!r} / 현재={current['summary']!r}",
+    )
 
 
 def _remove_created_dirs(created_dirs: list[str]) -> list[str]:
@@ -1735,8 +2347,9 @@ def _scenario_definition_checks() -> list[Check]:
         missing: list[str] = []
         if not (ROOT / scenario.task).is_file():
             missing.append(scenario.task)
-        if not (FAULTS_DIR / f"{scenario.fault}.py").is_file():
-            missing.append(f"evals/faults/{scenario.fault}.py")
+        for fault_id in scenario.fault_ids:
+            if not (FAULTS_DIR / f"{fault_id}.py").is_file():
+                missing.append(f"evals/faults/{fault_id}.py")
         for fixture_name, _ in scenario.installs:
             if not (FIXTURES_DIR / fixture_name).is_file():
                 missing.append(f"evals/fixtures/{fixture_name}")
@@ -1777,6 +2390,8 @@ def _scenario_definition_checks() -> list[Check]:
 
         if scenario.outcome == OUTCOME_BLOCKED:
             checks.extend(_blocked_scenario_definition_checks(scenario))
+        if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
+            checks.extend(_retry_exhausted_scenario_definition_checks(scenario))
     return checks
 
 
@@ -1824,6 +2439,77 @@ def _blocked_scenario_definition_checks(scenario: Scenario) -> list[Check]:
             f"{scenario_id} Planner 재호출 판정용 스냅샷 설정",
             scenario.snapshot_plan and not scenario.replan_checks,
             f"snapshot_plan={scenario.snapshot_plan} / replan_checks={scenario.replan_checks}",
+        ),
+        Check(
+            f"{scenario_id} 승격 필수 목록에 존재하지 않을 산출물이 없음",
+            not (promoted & forbidden),
+            f"승격 필수={sorted(promoted)}",
+        ),
+    ]
+
+
+def _retry_exhausted_scenario_definition_checks(scenario: Scenario) -> list[Check]:
+    """예산 소진 시나리오의 정의가 연쇄 주입 전제와 운영 라우팅 규칙에 맞는지 확인한다.
+
+    대표 결과가 아직 없어 replay로 확인할 수 없는 동안, 정의만이라도 기계로 검사한다.
+    """
+    scenario_id = scenario.scenario_id
+    fault_ids = list(scenario.fault_ids)
+    faults = [load_fault(fault_id) for fault_id in fault_ids]
+    install_targets = [target for _, target in scenario.installs]
+    forbidden = {artifact for artifact, _ in scenario.forbidden_artifacts}
+    promoted = {*scenario.promoted_files, *scenario.extra_promoted_files}
+    tokens = list(scenario.expected_failing_tokens)
+    signatures = [getattr(fault, "SIGNATURE_TEST", None) for fault in faults]
+    links = [getattr(fault, "PREVIOUS_FAULT_ID", None) for fault in faults]
+    next_attempt = scenario.expected_attempts + 1
+
+    return [
+        Check(
+            f"{scenario_id} 시도 수만큼 서로 다른 결함이 정의됨",
+            len(fault_ids) == scenario.expected_attempts and len(set(fault_ids)) == len(fault_ids),
+            f"시도={scenario.expected_attempts} / 결함={fault_ids}",
+        ),
+        Check(
+            f"{scenario_id} 결함이 순서대로 직전 결함을 가리킴",
+            links == [None, *fault_ids[:-1]],
+            f"PREVIOUS_FAULT_ID={links}",
+        ),
+        Check(
+            f"{scenario_id} 모든 결함이 계획 범위 안 전제를 스스로 검사",
+            all(callable(getattr(fault, "precheck", None)) for fault in faults)
+            and all(fault.TARGET_PATH in install_targets for fault in faults),
+            f"precheck={[callable(getattr(f, 'precheck', None)) for f in faults]} / "
+            f"대상={[f.TARGET_PATH for f in faults]}",
+        ),
+        Check(
+            f"{scenario_id} 시도별 실패 증상이 서로 다르게 정의됨",
+            len(tokens) == scenario.expected_attempts
+            and len(set(tokens)) == len(tokens)
+            and tokens == signatures,
+            f"기대 실패 테스트={tokens} / 결함 정의의 SIGNATURE_TEST={signatures}",
+        ),
+        Check(
+            f"{scenario_id} 기대 종료 상태가 예산 소진 라우팅과 일치",
+            scenario.expected_retry_count == scenario.expected_retry_budget
+            and scenario.expected_attempts == scenario.expected_retry_budget
+            and scenario.expected_final_status == "BLOCKED"
+            and scenario.expected_blocked_reason == "RETRY_BUDGET_EXCEEDED",
+            f"retry_count={scenario.expected_retry_count} / "
+            f"retry_budget={scenario.expected_retry_budget} / "
+            f"attempts={scenario.expected_attempts} / "
+            f"blocked_reason={scenario.expected_blocked_reason!r}",
+        ),
+        Check(
+            f"{scenario_id} 예산 소진 이후 산출물이 금지 목록에 정의됨",
+            forbidden
+            == {
+                f"change-log-{next_attempt}.md",
+                f"test-result-{next_attempt}.md",
+                f"fault-injection-{next_attempt}.md",
+                "review.md",
+            },
+            f"forbidden={sorted(forbidden)}",
         ),
         Check(
             f"{scenario_id} 승격 필수 목록에 존재하지 않을 산출물이 없음",
@@ -1949,10 +2635,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--task", default=None, help="시나리오 기본 task를 덮어쓸 경로 (기본값: 시나리오 정의)"
     )
 
-    inject_parser = subparsers.add_parser("inject", help="Developer 1차 직후 결함 주입")
+    inject_parser = subparsers.add_parser("inject", help="Developer N차 직후 결함 주입")
     inject_parser.add_argument("--run-id", required=True)
     inject_parser.add_argument(
         "--fault", default=None, help="주입할 결함 (기본값: 시나리오 정의)"
+    )
+    inject_parser.add_argument(
+        "--attempt",
+        type=int,
+        default=None,
+        help="몇 번째 시도 직후의 주입인지. 시도마다 다른 결함을 주입하는 시나리오에서는 필수",
     )
 
     assert_parser = subparsers.add_parser("assert", help="산출물 기반 자동 검증 (teardown 없음)")
@@ -1984,7 +2676,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "setup":
             return cmd_setup(args.scenario, args.task)
         if args.command == "inject":
-            return cmd_inject(args.run_id, args.fault)
+            return cmd_inject(args.run_id, args.fault, args.attempt)
         if args.command == "assert":
             return cmd_assert(args.run_id)
         if args.command == "finish":

@@ -204,16 +204,16 @@ Tester가 끝나면 **직접 `reports/<run-id>/test-result-N.md` 를 Read 한다
 
 ### PRODUCT_CODE_DEFECT
 
-1. §6 재시도 예산을 확인한다.
-2. `retry_count += 1`
-3. Developer를 다시 호출한다 (§3). 새 시도 번호는 `N = retry_count + 1`.
+1. `retry_count += 1` — 이번 실패가 예산 1회를 소비한다.
+2. §6 예산 판정을 적용한다. 예산이 소진됐으면 Developer를 **호출하지 않고** 즉시 `BLOCKED` (사유: `RETRY_BUDGET_EXCEEDED`).
+3. 예산이 남아 있으면 Developer를 다시 호출한다 (§3). 새 시도 번호는 `N = retry_count + 1`.
 4. Developer 프롬프트에 **이전 `test-result-{N-1}.md` 와 `change-log-{N-1}.md` 를 반드시 읽고 이전과 다른 가설로 수정하라** 고 명시한다. (`CLAUDE.md §16`)
 
 ### PLAN_DEFECT
 
-1. §6 재시도 예산을 확인한다.
-2. `retry_count += 1`
-3. `current_stage` 를 `PLANNING` 으로 되돌리고 Planner를 다시 호출한다 (§2).
+1. `retry_count += 1` — 이번 실패가 예산 1회를 소비한다.
+2. §6 예산 판정을 적용한다. 예산이 소진됐으면 Planner를 **호출하지 않고** 즉시 `BLOCKED` (사유: `RETRY_BUDGET_EXCEEDED`).
+3. 예산이 남아 있으면 `current_stage` 를 `PLANNING` 으로 되돌리고 Planner를 다시 호출한다 (§2).
    프롬프트에 재계획 사유와 참고할 `test-result-N.md` 경로를 포함한다.
 4. `plan.md` 갱신을 확인한 뒤 Developer 루프(§3)로 복귀한다.
 
@@ -231,7 +231,8 @@ Tester가 끝나면 **직접 `reports/<run-id>/test-result-N.md` 를 Read 한다
 ### UNKNOWN
 
 * `unknown_retry_used == false` 이면
-  → `unknown_retry_used = true` 로 바꾸고, §6 예산 확인 후 `retry_count += 1`, Developer를 1회만 재호출한다.
+  → `unknown_retry_used = true` 로 바꾸고 `retry_count += 1` 한 뒤 §6 예산 판정을 적용한다.
+  예산이 남아 있으면 Developer를 1회만 재호출하고, 소진됐으면 즉시 `BLOCKED` (사유: `RETRY_BUDGET_EXCEEDED`).
 * `unknown_retry_used == true` 이면
   → 즉시 `BLOCKED` (사유: `UNKNOWN_TWICE`).
 
@@ -241,22 +242,42 @@ Tester가 끝나면 **직접 `reports/<run-id>/test-result-N.md` 를 Read 한다
 
 재시도 예산은 **실행 전체에서 하나로 공유** 하며 상한은 **3회** 다.
 
-예산을 1회 소비하는 경우:
+`retry_count` 는 **예산을 소비한 실패 시도 수** 다. "앞으로 남은 재시도 횟수" 가 아니라
+"지금까지 예산을 써 버린 실패의 수" 이므로, 예산을 소비하는 실패가 나면 **먼저 올리고 나서**
+비교한다.
 
-* `PRODUCT_CODE_DEFECT` 로 인한 Developer 재수정
-* `PLAN_DEFECT` 로 인한 Planner 재계획
-* `UNKNOWN` 1회 추가 시도
-* Reviewer의 `CHANGES_REQUESTED` 로 인한 재수정
+예산을 1회 소비하는 실패:
 
-예산을 소비하지 않는 경우:
+* `PRODUCT_CODE_DEFECT`
+* `PLAN_DEFECT`
+* `UNKNOWN` (1회에 한함)
+* Reviewer의 `CHANGES_REQUESTED`
+
+예산을 소비하지 않는 실패:
 
 * `ENVIRONMENT_ERROR` (즉시 종료)
 
-재시도를 시작하기 **전에** 항상 확인한다.
+예산을 소비하는 실패가 발생하면 **항상 다음 순서** 로 처리한다.
 
 ```text
-retry_count < retry_budget   →  재시도 진행
-retry_count >= retry_budget  →  BLOCKED (사유: RETRY_BUDGET_EXCEEDED)
+1. retry_count += 1
+2. 비교
+   retry_count >= retry_budget  →  BLOCKED. 다음 Agent를 호출하지 않는다.
+                                   (사유: RETRY_BUDGET_EXCEEDED,
+                                    단 CHANGES_REQUESTED 는 REVIEW_CHANGES_REQUESTED_NO_BUDGET)
+   retry_count <  retry_budget  →  §5 의 실패 원인 분류에 따라 다음 Agent를 호출한다.
+```
+
+증가와 비교의 순서를 바꾸지 않는다. 비교를 먼저 하면 예산이 3인데 Developer → Tester 반복이
+4회 일어나 `CLAUDE.md §16` 의 "최대 3회" 와 어긋난다.
+
+`retry_budget = 3` 일 때 예산이 모두 소비되는 경로는 다음과 같다.
+
+```text
+Developer 1차 → Tester 1차 FAIL → retry_count = 1 → Developer 2차
+              → Tester 2차 FAIL → retry_count = 2 → Developer 3차
+              → Tester 3차 FAIL → retry_count = 3 → BLOCKED (RETRY_BUDGET_EXCEEDED)
+                                                    Developer 4차 없음 / Tester 4차 없음 / Reviewer 없음
 ```
 
 무한 루프를 허용하지 않는다. 같은 실패를 근거 없이 반복하지 않는다.
@@ -290,11 +311,11 @@ Reviewer가 끝나면 **직접 `reports/<run-id>/review.md` 를 Read 한다.**
 
 ### 7-2. CHANGES_REQUESTED 처리
 
-* 재시도 예산이 남아 있으면 (§6)
-  `retry_count += 1` 후 Developer(§3) → Tester(§4) 루프로 한 번 복귀한다.
-  Developer 프롬프트에 `review.md` 경로와 지적사항을 재수정 근거로 전달한다.
-* 예산이 없으면
-  `BLOCKED` (사유: `REVIEW_CHANGES_REQUESTED_NO_BUDGET`)
+1. `retry_count += 1` — 이번 지적이 예산 1회를 소비한다.
+2. §6 예산 판정을 적용한다.
+   * 예산이 남아 있으면 Developer(§3) → Tester(§4) 루프로 한 번 복귀한다.
+     Developer 프롬프트에 `review.md` 경로와 지적사항을 재수정 근거로 전달한다.
+   * 예산이 소진됐으면 `BLOCKED` (사유: `REVIEW_CHANGES_REQUESTED_NO_BUDGET`)
 
 ---
 
