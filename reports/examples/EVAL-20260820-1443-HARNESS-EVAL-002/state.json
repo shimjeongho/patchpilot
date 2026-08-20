@@ -1,0 +1,40 @@
+{
+  "run_id": "RUN-20260820-1443-HARNESS-EVAL-002",
+  "task": "evals/fixtures/HARNESS-EVAL-002.md",
+  "status": "SUCCESS",
+  "current_stage": "DONE",
+  "retry_count": 1,
+  "retry_budget": 3,
+  "unknown_retry_used": false,
+  "started_at": "2026-08-20 14:43",
+  "finished_at": "2026-08-20 14:59",
+  "start_commit": "c32e097052b4c3f4844d74a6f74b848554e9c859",
+  "start_dirty_files": [
+    "?? sample-project/src/expense/charge_rounding.py",
+    "?? sample-project/src/expense/service_charge.py",
+    "?? sample-project/tests/test_charge_rounding.py",
+    "?? sample-project/tests/test_service_charge.py"
+  ],
+  "attempts": [
+    {
+      "n": 1,
+      "change_log": "change-log-1.md",
+      "test_result": "test-result-1.md",
+      "status": "FAIL",
+      "failure_category": "PLAN_DEFECT"
+    },
+    {
+      "n": 2,
+      "change_log": "change-log-2.md",
+      "test_result": "test-result-2.md",
+      "status": "PASS",
+      "failure_category": null
+    }
+  ],
+  "review": {
+    "verdict": "APPROVED",
+    "file": "review.md"
+  },
+  "final_status": "SUCCESS",
+  "blocked_reason": null
+}
