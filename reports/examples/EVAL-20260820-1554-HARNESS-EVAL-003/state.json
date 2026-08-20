@@ -1,0 +1,33 @@
+{
+  "run_id": "RUN-20260820-1554-HARNESS-EVAL-003",
+  "task": "evals/fixtures/HARNESS-EVAL-003.md",
+  "status": "BLOCKED",
+  "current_stage": "DONE",
+  "retry_count": 0,
+  "retry_budget": 3,
+  "unknown_retry_used": false,
+  "started_at": "20260820-1554",
+  "finished_at": "20260820-1619",
+  "start_commit": "8c1fe732d0ce670d3be209c0abe9a3273667c4f7",
+  "start_dirty_files": [
+    "?? sample-project/config/",
+    "?? sample-project/src/expense/tip.py",
+    "?? sample-project/tests/conftest.py",
+    "?? sample-project/tests/test_tip.py"
+  ],
+  "attempts": [
+    {
+      "n": 1,
+      "change_log": "change-log-1.md",
+      "test_result": "test-result-1.md",
+      "status": "FAIL",
+      "failure_category": "ENVIRONMENT_ERROR"
+    }
+  ],
+  "review": {
+    "verdict": null,
+    "file": null
+  },
+  "final_status": "BLOCKED",
+  "blocked_reason": "ENVIRONMENT_ERROR"
+}
