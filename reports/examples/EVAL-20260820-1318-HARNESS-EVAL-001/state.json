@@ -1,0 +1,38 @@
+{
+  "run_id": "RUN-20260820-1318-HARNESS-EVAL-001",
+  "task": "evals/fixtures/HARNESS-EVAL-001.md",
+  "status": "SUCCESS",
+  "current_stage": "DONE",
+  "retry_count": 1,
+  "retry_budget": 3,
+  "unknown_retry_used": false,
+  "started_at": "20260820-1318",
+  "finished_at": "20260820-1333",
+  "start_commit": "3d5f7c31fd1ca711bb9f2368a096aa2700ad6355",
+  "start_dirty_files": [
+    "?? sample-project/src/expense/tip.py",
+    "?? sample-project/tests/test_tip.py"
+  ],
+  "attempts": [
+    {
+      "n": 1,
+      "change_log": "change-log-1.md",
+      "test_result": "test-result-1.md",
+      "status": "FAIL",
+      "failure_category": "PRODUCT_CODE_DEFECT"
+    },
+    {
+      "n": 2,
+      "change_log": "change-log-2.md",
+      "test_result": "test-result-2.md",
+      "status": "PASS",
+      "failure_category": null
+    }
+  ],
+  "review": {
+    "verdict": "APPROVED",
+    "file": "review.md"
+  },
+  "final_status": "SUCCESS",
+  "blocked_reason": null
+}
