@@ -22,6 +22,7 @@ Agent가 수정할 실제 대상 코드는 `sample-project/` 아래에 있습니
 * `.claude/`
 * `tasks/`
 * `reports/`
+* `evals/`
 
 Agent는 명시적인 지시가 없는 한 Harness 설정 파일을 임의로 수정하지 않습니다.
 

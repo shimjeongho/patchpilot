@@ -51,3 +51,10 @@ Thumbs.db
 reports/*
 !reports/examples/
 !reports/examples/**
+
+
+# ==============================
+# PatchPilot Eval 실행 상태
+# ==============================
+
+evals/.eval-run/
