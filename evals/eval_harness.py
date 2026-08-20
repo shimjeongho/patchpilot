@@ -594,6 +594,25 @@ def test_function_names(text: str) -> set[str]:
     return names
 
 
+def failed_test_names(text: str) -> set[str]:
+    """`test-result-N.md` 에 담긴 pytest 원본 출력에서 실제 실패한 테스트 이름을 뽑는다.
+
+    pytest 요약 줄(`FAILED <path>::<test_name>`)만 실패의 증거로 본다. 문서 전체를 문자열로
+    훑으면 Tester가 설명 절에 적은 테스트 이름(예: "이미 존재하는 회귀 테스트 목록")까지
+    실패로 오인하게 된다. 실제로 그 오탐이 발생해 실패하지 않은 테스트가 "이전 시도에도
+    기록됨" 으로 판정된 적이 있다.
+
+    경로 구분자는 실행 환경에 따라 `/` 와 `\\` 가 섞이므로 경로는 쓰지 않고 `::` 뒤의 이름만
+    쓴다. 매개변수화된 테스트(`test_x[case]`)는 대괄호를 포함한 전체 이름을 그대로 반환한다.
+    """
+    names = set()
+    for line in text.splitlines():
+        match = re.match(r"^\s*FAILED\s+\S+?::(\S+)", line)
+        if match:
+            names.add(match.group(1))
+    return names
+
+
 def section_body(text: str, heading_keyword: str) -> str:
     """`heading_keyword` 를 포함하는 `##` 제목 아래 본문을 다음 제목 직전까지 반환한다.
 
@@ -1360,6 +1379,9 @@ def _retry_exhausted_checks(
     2. 그 뒤 새로 주입된 결함으로 Tester가 실제 실행 결과 FAIL을 기록했는가
     3. 그 실패가 이전 시도와 **다른 증상** 인가 (같은 실패의 반복이 아님)
 
+    3번의 비교 근거는 pytest 요약 줄(`FAILED ...::...`)에서 뽑은 실패 테스트 집합이다.
+    (`failed_test_names`) Tester의 설명 문장에 등장하는 테스트 이름은 실패 증거가 아니다.
+
     마지막에는 반대로 **일어나지 않아야 하는 일** 을 확인한다. 예산이 소진된 뒤에는
     Developer 4차 / Tester 4차 / 4차 결함 주입 / Reviewer가 모두 없어야 한다.
     """
@@ -1380,7 +1402,7 @@ def _retry_exhausted_checks(
         )
     )
 
-    previous_results: list[str] = []
+    previous_failed: list[set[str]] = []
     for attempt in range(1, total_attempts + 1):
         change_log = read_run_file(run_dir, f"change-log-{attempt}.md")
         checks.append(
@@ -1448,29 +1470,34 @@ def _retry_exhausted_checks(
             if len(scenario.expected_failing_tokens) >= attempt
             else scenario.expected_failing_token
         )
-        mentions = bool(test_result and token in test_result)
+        # 실패 증거는 pytest 요약 줄(`FAILED ...::...`)에서만 읽는다. Tester의 설명 문장이나
+        # 회귀 테스트 목록에 이름이 등장하는 것은 실패로 보지 않는다.
+        failed = failed_test_names(test_result or "")
+        mentions = token in failed
         checks.append(
             Check(
                 f"test-result-{attempt}.md 가 {attempt}차 주입 결함의 실패 테스트를 기록",
                 mentions,
-                f"{token} 실패가 기록됨" if mentions else f"{token} 실패 기록 없음",
+                f"pytest 실패 {len(failed)}건에 {token} 포함"
+                if mentions
+                else f"{token} 이(가) pytest 실패 목록에 없음 (실패 {sorted(failed)})",
             )
         )
         if attempt >= 2:
             # 같은 실패가 반복된 것이 아니라 새 결함으로 인한 새 실패인지 확인한다.
             repeated = [
-                index + 1 for index, earlier in enumerate(previous_results) if token in earlier
+                index + 1 for index, earlier in enumerate(previous_failed) if token in earlier
             ]
             checks.append(
                 Check(
                     f"{attempt}차 실패 증상이 이전 시도와 다름",
                     mentions and not repeated,
-                    f"{token} 이(가) 이전 시도에도 기록됨: {repeated}차"
+                    f"{token} 이(가) 이전 시도의 pytest 실패 목록에도 있음: {repeated}차"
                     if repeated
-                    else f"{token} 은(는) {attempt}차에서 처음 실패",
+                    else f"{token} 은(는) {attempt}차 pytest 실패 목록에서 처음 등장",
                 )
             )
-        previous_results.append(test_result or "")
+        previous_failed.append(failed)
 
         category = section_value(test_result, "실패 원인 분류") if test_result else ""
         checks.append(
@@ -2540,6 +2567,54 @@ def _parser_checks(example_dir: Path) -> list[Check]:
             "change-log 변경 파일 목록 파서가 경로를 인식",
             changed == ["sample-project/src/expense/tip.py"],
             f"추출 결과={changed}",
+        )
+    )
+    checks.extend(_failure_parser_checks(example_dir))
+    return checks
+
+
+def _failure_parser_checks(example_dir: Path) -> list[Check]:
+    """실패 테스트 파서가 pytest 요약 줄만 실패 증거로 삼는지 확인한다.
+
+    설명 문장에 적힌 테스트 이름을 실패로 오인하면 "이전 시도와 다른 증상" 판정이 무너진다.
+    실제로 그 오탐이 발생했으므로 회귀로 남긴다.
+    """
+    checks: list[Check] = []
+
+    test_result = read_run_file(example_dir, "test-result-1.md")
+    parsed = failed_test_names(test_result) if test_result else set()
+    expected_count = sum(
+        1 for line in (test_result or "").splitlines() if line.strip().startswith("FAILED ")
+    )
+    checks.append(
+        Check(
+            "실패 테스트 파서가 pytest 요약 줄을 인식",
+            bool(parsed)
+            and len(parsed) == expected_count
+            and all(name.startswith("test_split_tip") for name in parsed),
+            f"FAILED 줄 {expected_count}개 / 추출 {len(parsed)}건",
+        )
+    )
+
+    sample = """STATUS: FAIL
+
+## pytest 원본 출력
+```text
+FAILED sample-project/tests/test_x.py::test_really_failed
+1 failed, 9 passed
+```
+
+## 추가한 회귀 테스트
+없음. 다음 테스트가 이미 존재하며 이번에는 통과했다.
+
+- `test_only_mentioned_in_prose`
+"""
+    sample_parsed = failed_test_names(sample)
+    checks.append(
+        Check(
+            "실패 테스트 파서가 설명 문장의 테스트 이름을 실패로 보지 않음",
+            sample_parsed == {"test_really_failed"},
+            f"추출 결과={sorted(sample_parsed)}",
         )
     )
     return checks
