@@ -1,0 +1,6 @@
+{
+  "_source": "patchpilot-eval:env_error_001",
+  "currency": "KRW",
+  "settlement_unit": 1,
+  "rounding": "floor"
+}

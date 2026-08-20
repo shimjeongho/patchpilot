@@ -11,7 +11,7 @@ Eval은 결함을 의도적으로 주입해 그 경로를 **매번 같은 방식
 
 ## 1. 검증 대상 전이
 
-시나리오는 두 개다. `--scenario` 를 생략하면 `harness-eval-001` 이 실행된다.
+시나리오는 세 개다. `--scenario` 를 생략하면 `harness-eval-001` 이 실행된다.
 
 ### `harness-eval-001` — PRODUCT_CODE_DEFECT 재시도 루프
 
@@ -44,7 +44,23 @@ Planner 1차
   -> SUCCESS
 ```
 
-두 전이 모두 눈으로 확인하지 않는다. `eval_harness.py` 의 `assert` 가 `reports/<run-id>/` 산출물과
+### `harness-eval-003` — ENVIRONMENT_ERROR 즉시 종료 라우팅
+
+```text
+Planner
+  -> Developer 1차
+  -> Fault Injection          (테스트 실행에 필요한 런타임 리소스 삭제)
+  -> Tester FAIL
+  -> ENVIRONMENT_ERROR
+  -> retry_count = 0          (재시도 예산을 소비하지 않는다)
+  -> Planner 2차 / Developer 2차 / Tester 2차 / Reviewer 미호출
+  -> BLOCKED                  (blocked_reason = ENVIRONMENT_ERROR)
+```
+
+앞의 두 시나리오가 "재시도가 실제로 일어나는가" 를 본다면, 이 시나리오는 반대로
+**"재시도가 실제로 일어나지 않는가"** 를 본다. (`CLAUDE.md §20`, `patchpilot.md §5`)
+
+세 전이 모두 눈으로 확인하지 않는다. `eval_harness.py` 의 `assert` 가 `reports/<run-id>/` 산출물과
 제품 코드 상태만 근거로 자동 판정한다.
 
 ---
@@ -63,10 +79,14 @@ evals/
 │   ├── service_charge.py           # 결함이 있는 대상 모듈 (설치 대상)
 │   ├── charge_rounding.py          # 정상 동작하는 협력 모듈 (설치 대상)
 │   ├── test_service_charge.py      # 대상 모듈 계약 테스트 (설치 대상)
-│   └── test_charge_rounding.py     # 협력 모듈 계약 테스트 (설치 대상)
+│   ├── test_charge_rounding.py     # 협력 모듈 계약 테스트 (설치 대상)
+│   ├── HARNESS-EVAL-003.md         # eval 전용 고정 Task (ENVIRONMENT_ERROR)
+│   ├── conftest_settlement_runtime.py  # 런타임 리소스를 읽는 테스트 부트스트랩 (설치 대상)
+│   └── settlement_runtime.json     # 삭제 대상이 되는 런타임 리소스 (설치 대상)
 └── faults/
     ├── retry_001.py                # 재시도 루프 검증용 결함 정의 (계획 범위 안)
-    └── plan_defect_001.py          # 재계획 라우팅 검증용 결함 정의 (계획 범위 밖)
+    ├── plan_defect_001.py          # 재계획 라우팅 검증용 결함 정의 (계획 범위 밖)
+    └── env_error_001.py            # 즉시 종료 라우팅 검증용 결함 정의 (리소스 삭제)
 ```
 
 시나리오별 설치 대상은 다음과 같다. eval 실행 중에만 설치되고 teardown에서 제거된다.
@@ -87,6 +107,23 @@ evals/
 | `fixtures/service_charge.py` | `sample-project/src/expense/service_charge.py` |
 | `fixtures/test_charge_rounding.py` | `sample-project/tests/test_charge_rounding.py` |
 | `fixtures/test_service_charge.py` | `sample-project/tests/test_service_charge.py` |
+
+`harness-eval-003`
+
+| fixture | 설치 경로 |
+| --- | --- |
+| `fixtures/tip.py` | `sample-project/src/expense/tip.py` |
+| `fixtures/test_tip.py` | `sample-project/tests/test_tip.py` |
+| `fixtures/conftest_settlement_runtime.py` | `sample-project/tests/conftest.py` |
+| `fixtures/settlement_runtime.json` | `sample-project/config/settlement_runtime.json` |
+
+`harness-eval-003` 은 제품 버그와 그 테스트를 `harness-eval-001` 과 공유한다. 이 시나리오가
+바꾸는 변수는 제품 버그가 아니라 결함의 종류 하나이기 때문이다. 시나리오는 동시에 실행되지
+않고 `setup` 은 설치 대상이 이미 존재하면 거부하므로, 설치 경로를 공유해도 서로 간섭하지 않는다.
+
+`sample-project/config/` 처럼 setup이 새로 만든 디렉터리는 상태 파일의 `created_dirs` 에
+기록되고 teardown에서 비어 있을 때 함께 제거된다. 빈 디렉터리는 `git status` 에 나타나지
+않으므로 상태 비교만으로는 복구 여부를 확인할 수 없기 때문이다.
 
 `evals/.eval-run/state.json` 은 실행 중 상태(시나리오, 설치 목록, 원상태 스냅샷, 주입 기록)를
 담는 임시 파일이며 Git에 커밋하지 않는다.
@@ -160,6 +197,64 @@ Planner는 운영과 동일하게 `plan.md` **하나만** 쓴다. 운영 `/patch
 | `plan-2.md` | `assert` / `finish` 실행 시 |
 
 `assert` 는 두 파일의 해시, 수정 허용 파일 목록, 예상 원인 본문이 실제로 달라졌는지 판정한다.
+
+`harness-eval-003` 은 같은 스냅샷을 반대 방향으로 쓴다. 결함 주입 시점의 `plan-1.md` 와
+종료 시점의 `plan.md` 해시가 **같다는 것** 이 Planner가 다시 호출되지 않았다는 증거가 된다.
+
+### 3-8. ENVIRONMENT_ERROR 도 실제 실행 결과로만 만든다
+
+`test-result-N.md` 의 `STATUS:` 나 실패 원인 분류 문자열을 Harness가 대신 써 넣지 않는다는
+원칙은 세 시나리오 모두 같다. `harness-eval-003` 에서 Tester가 실제로 겪는 것은 다음이다.
+
+```text
+ImportError while loading conftest 'sample-project/tests/conftest.py'.
+E   RuntimeError: 정산 런타임 설정 리소스를 찾을 수 없습니다: sample-project/config/settlement_runtime.json
+```
+
+pytest는 종료 코드 4로 끝나고 테스트는 한 건도 수집되지 않는다. "코드가 틀렸다" 가 아니라
+"실행 환경이 준비되지 않아 실행 자체가 불가능하다" 는 상태가 실행 결과로 드러난다.
+(`tester.md §3` 의 `ENVIRONMENT_ERROR` 기준)
+
+### 3-9. 실행 환경 오류는 제품 코드를 깨뜨려서 만들지 않는다
+
+`env_error_001` 은 제품 코드를 한 글자도 고치지 않는다. 제품 코드를 깨뜨리면
+`PRODUCT_CODE_DEFECT` 로 분류하는 것이 **옳은 판정** 이 되어 검증하려는 경로를 지나가지 못한다.
+
+대신 테스트 실행에 필요한 런타임 리소스(`sample-project/config/settlement_runtime.json`)를
+지운다. 이 리소스는 제품 코드가 아니라 실행 환경이 배치하는 파일이고, 없으면 수집 단계에서
+실행이 중단되므로 원인이 제품 코드 바깥에 있다는 것이 실행 결과만으로 드러난다.
+
+### 3-10. 삭제는 이번 eval이 설치한 untracked 리소스로만 제한한다
+
+파일 삭제는 되돌릴 수 없으므로 결함 정의와 Harness가 같은 조건을 **각각** 검사한다.
+하나라도 어긋나면 지우지 않고 즉시 실패한다.
+
+| 조건 | 확인 주체 |
+| --- | --- |
+| `sample-project/` 안의 상대 경로 (절대 경로·상위 경로 참조 거부) | `eval_harness.py` |
+| 심볼릭 링크가 아님 | `eval_harness.py` |
+| Git 추적 파일이 아님 | `eval_harness.py` / `env_error_001.precheck_fs` |
+| 이번 eval의 `setup` 이 설치한 파일임 | `eval_harness.py` / `env_error_001.precheck_fs` |
+| 파일 내용에 `patchpilot-eval:env_error_001` 표식이 있음 | `env_error_001.precheck_fs` |
+
+실제 삭제는 결함 정의가 아니라 `eval_harness.py` 한 곳에서만 수행한다. 파일을 지우는 코드가
+여러 곳에 흩어지면 안전 조건을 한곳에서 보장할 수 없기 때문이다.
+
+### 3-11. 즉시 종료 전이는 "일어나지 않은 일" 로 판정한다
+
+`harness-eval-001` / `harness-eval-002` 는 재시도가 일어났다는 증거(2차 산출물)를 찾는다.
+`harness-eval-003` 은 반대로 다음이 **하나도 없어야** 통과한다.
+
+* `change-log-2.md` (Developer 2차)
+* `test-result-2.md` (Tester 2차)
+* `review.md` (Reviewer)
+* `plan.md` 의 변경 (Planner 2차)
+* `state.json` 의 `retry_count > 0`, `attempts` 2건, `review.verdict` 값
+
+산출물이 없다는 사실만으로는 "Agent가 호출되지 않았다" 와 "호출됐지만 파일을 쓰지 않았다" 를
+구분할 수 없다. 그래서 `state.json` 의 `retry_count` / `attempts` / `review` 기록을 함께 본다.
+Orchestrator는 어떤 경로로 끝나든 `state.json` 과 `report.md` 를 남겨야 하므로
+(`patchpilot.md §10`), 이 세 값이 비어 있다는 것은 라우팅이 실제로 즉시 종료됐다는 뜻이다.
 
 ---
 
@@ -260,7 +355,7 @@ uv run python evals/eval_harness.py teardown
 uv run python evals/eval_harness.py status
 ```
 
-Agent 실행 없이 harness 자체의 회귀만 확인하려면 `selftest` 를 쓴다. (§8)
+Agent 실행 없이 harness 자체의 회귀만 확인하려면 `selftest` 를 쓴다. (§9)
 
 ```bash
 uv run python evals/eval_harness.py selftest
@@ -382,11 +477,80 @@ uv run python evals/eval_harness.py finish --run-id <run-id>
 
 ---
 
-## 6. 자동 검증 항목
+## 6. 실행 절차 — `harness-eval-003` (ENVIRONMENT_ERROR)
+
+§4와 다른 부분만 적는다. 나머지는 동일하다.
+
+### 6-1. setup
+
+```bash
+uv run python evals/eval_harness.py setup --scenario harness-eval-003
+```
+
+제품 모듈과 테스트(001과 동일), 테스트 부트스트랩 `conftest.py`, 런타임 리소스
+`config/settlement_runtime.json` 네 개를 설치한다. 이 시점에는 리소스가 **정상적으로 존재** 하며
+`test_tip.py` 만 제품 버그로 실패한다.
+
+### 6-2. Planner
+
+Task 경로는 다음을 사용한다.
+
+```text
+evals/fixtures/HARNESS-EVAL-003.md
+```
+
+run-id 형식은 `RUN-YYYYMMDD-HHMM-HARNESS-EVAL-003` 이 된다.
+
+### 6-3. Developer 1차
+
+`developer` 를 시도 번호 `N = 1` 로 호출한다. 산출물은 `change-log-1.md` 다.
+
+### 6-4. Fault Injection
+
+Developer 1차가 끝나고 **Tester를 호출하기 전에** 한 번만 실행한다.
+
+```bash
+uv run python evals/eval_harness.py inject --run-id <run-id>
+```
+
+이때 두 가지가 함께 일어난다.
+
+1. `reports/<run-id>/plan-1.md` 에 Planner 1차 산출물이 복사된다.
+   (Planner가 다시 호출되지 않았음을 나중에 해시로 판정하기 위한 기준이다)
+2. §3-10의 조건을 모두 통과한 경우에만 런타임 리소스를 삭제한다.
+
+### 6-5. Tester 1차
+
+`test-result-1.md` 는 `STATUS: FAIL`, 실패 원인 분류는 `ENVIRONMENT_ERROR` 가 되어야 한다.
+
+Tester에게 결함 주입 사실을 알리지 않는다. Tester가 실제로 보게 되는 것은 conftest 로딩 실패로
+테스트가 한 건도 수집되지 않는 pytest 출력뿐이다. (§3-8)
+
+### 6-6. FAIL 라우팅 — 여기서 끝난다
+
+`ENVIRONMENT_ERROR` 는 코드 결함이 아니므로 **`retry_count` 를 증가시키지 않고** 즉시
+`BLOCKED` 로 종료한다. (`CLAUDE.md §20`, `patchpilot.md §5`)
+
+Developer도 Planner도 Reviewer도 다시 호출하지 않는다. Orchestrator는 `report.md` 와
+`state.json` 만 마감한다. `blocked_reason` 은 `ENVIRONMENT_ERROR` 다.
+
+### 6-7. 자동 검증 + teardown
+
+```bash
+uv run python evals/eval_harness.py finish --run-id <run-id>
+```
+
+`finish` 는 검증 결과와 무관하게 teardown을 수행한다. 삭제된 런타임 리소스는 복구하지 않는다.
+teardown이 나머지 fixture와 함께 정리하고, setup이 만든 `sample-project/config/` 디렉터리도
+비어 있으면 제거한다.
+
+---
+
+## 7. 자동 검증 항목
 
 `assert` / `finish` 가 판정하는 항목이다. 하나라도 실패하면 eval은 FAIL이다.
 
-### 6-1. 두 시나리오 공통 (`harness-eval-001` 기준 25항목 + teardown 2항목)
+### 7-1. 재시도 후 성공하는 시나리오 공통 (`harness-eval-001` 기준 25항목 + teardown 2항목 = 27항목)
 
 | 구분 | 항목 |
 | --- | --- |
@@ -407,7 +571,7 @@ uv run python evals/eval_harness.py finish --run-id <run-id>
 | 범위 | eval 실행이 기존 추적 파일을 변경하지 않음 |
 | 복구 | teardown 후 `sample-project/` 상태가 setup 시점 스냅샷과 동일 |
 
-### 6-2. `harness-eval-002` 추가 항목 (10항목, 총 35 + teardown 2)
+### 7-2. `harness-eval-002` 추가 항목 (10항목, 총 35 + teardown 2 = 37항목)
 
 | 구분 | 항목 |
 | --- | --- |
@@ -424,9 +588,49 @@ uv run python evals/eval_harness.py finish --run-id <run-id>
 
 `plan-1.md` / `plan-2.md` 는 `promote` 시 대표 결과에도 함께 복사된다.
 
+### 7-3. `harness-eval-003` 항목 (26항목 + teardown 2 = 28항목)
+
+즉시 종료 시나리오는 §7-1의 "재시도 성공" 항목들(Developer 2차 / Tester 2차 / Reviewer /
+`final_status == SUCCESS`)을 쓰지 않는다. 판정 항목 전체는 다음과 같다.
+
+| # | 구분 | 항목 |
+| --- | --- | --- |
+| 1 | 산출물 | `plan.md` 존재 |
+| 2 | 산출물 | `plan-1.md` 스냅샷 존재 |
+| 3 | 산출물 | `change-log-1.md` 존재 |
+| 4 | 결함 주입 | `fault-injection.md` 존재 |
+| 5 | 결함 주입 | 주입이 Developer 1차 이후에 이루어짐 |
+| 6 | Tester 1차 | 첫 줄이 `STATUS: FAIL` |
+| 7 | Tester 1차 | 고정 실행 명령 `uv run pytest sample-project/tests -q` 기록 |
+| 8 | Tester 1차 | 주입된 실행 환경 오류 증상(`settlement_runtime.json`) 기록 |
+| 9 | 라우팅 | 실패 원인 분류가 `ENVIRONMENT_ERROR` |
+| 10 | 미호출 | Planner 2차가 호출되지 않음 (`plan.md` 해시가 `plan-1.md` 와 동일) |
+| 11 | 미호출 | Developer 2차가 호출되지 않음 (`change-log-2.md` 없음) |
+| 12 | 미호출 | Tester 2차가 호출되지 않음 (`test-result-2.md` 없음) |
+| 13 | 미호출 | Reviewer가 호출되지 않음 (`review.md` 없음) |
+| 14 | 상태 | `state.json` 존재 |
+| 15 | 상태 | `retry_count == 0` (재시도 예산 미소비) |
+| 16 | 상태 | `final_status == BLOCKED` |
+| 17 | 상태 | `current_stage == DONE` |
+| 18 | 상태 | `blocked_reason == ENVIRONMENT_ERROR` |
+| 19 | 상태 | `attempts` 1건 |
+| 20 | 상태 | `attempts[0]` 이 FAIL / `ENVIRONMENT_ERROR` |
+| 21 | 상태 | `review.verdict` 없음 |
+| 22 | 무결성 | 삭제된 런타임 리소스가 복구되지 않음 |
+| 23 | 무결성 | eval 테스트가 약화되지 않음 |
+| 24 | 범위 | 기존 추적 파일이 변경되지 않음 |
+| 25 | 산출물 | `report.md` 존재 |
+| 26 | 산출물 | `report.md` 에 BLOCKED 종료와 사유가 기록됨 |
+| 27 | 복구 | eval fixture 제거 (teardown) |
+| 28 | 복구 | teardown 후 `sample-project/` 상태가 setup 시점 스냅샷과 동일 |
+
+`plan-1.md` 는 `promote` 시 대표 결과에도 함께 복사된다. 이 시나리오의 승격 필수 목록에는
+`change-log-2.md` / `test-result-2.md` / `review.md` 가 들어가지 않는다. 존재하지 않는 것이
+정상이기 때문이다.
+
 ---
 
-## 7. 실패했을 때
+## 8. 실패했을 때
 
 `reports/<run-id>/eval-result.md` 의 표에서 `FAIL` 인 행의 "근거" 열을 먼저 본다.
 
@@ -439,6 +643,9 @@ uv run python evals/eval_harness.py finish --run-id <run-id>
 | `plan 1차와 2차의 내용이 실제로 다름` 이 FAIL | Planner 2차가 호출됐는지, `plan.md` 를 덮어썼는지 |
 | `plan 1차 수정 허용 파일 목록이 계획대로 한정됨` 이 FAIL | Planner 1차가 범위를 넓게 잡았는지 (`plan-1.md` §7) |
 | 복구 실패 | `git status --porcelain -- sample-project` 를 직접 확인 |
+| `실패 원인 분류가 ENVIRONMENT_ERROR` 가 FAIL | Tester가 실행 환경 오류를 제품 코드 결함으로 봤는지 (`tester.md §3`) |
+| `Developer 2차가 호출되지 않음` 이 FAIL | Orchestrator가 `ENVIRONMENT_ERROR` 를 재시도 경로로 라우팅했는지 (`patchpilot.md §5`) |
+| `삭제된 런타임 리소스가 복구되지 않음` 이 FAIL | Agent가 실행 환경을 임의로 되살렸는지 |
 
 `inject` 가 `주입 전제 조건 위반` 으로 실패하는 경우는 두 가지다. 어느 쪽이든 결함을 주입하지
 않고 중단하므로 제품 코드는 그대로 남는다.
@@ -446,10 +653,12 @@ uv run python evals/eval_harness.py finish --run-id <run-id>
 * `ANCHOR` 를 찾지 못함 → Developer 1차가 대상 함수를 모듈 최상위에 유지하지 않았다.
 * `precheck` 거부 → Planner 1차가 주입 대상을 이미 수정 허용 파일 목록에 넣었다.
   `harness-eval-002` 의 전제(계획 범위 밖 결함)가 성립하지 않는다는 뜻이다.
+* `precheck_fs` 거부 또는 Harness 삭제 조건 위반 → 삭제 대상이 §3-10의 조건을 만족하지 않는다.
+  파일을 지우지 않고 중단하므로 `sample-project/` 는 그대로 남는다.
 
 ---
 
-## 8. selftest — harness 자체의 회귀 확인
+## 9. selftest — harness 자체의 회귀 확인
 
 시나리오가 늘어나면 `eval_harness.py` 의 판정 코드가 공유된다. 이때 가장 큰 위험은
 **기존 `harness-eval-001` 의 판정이 조용히 달라지는 것** 이다.
@@ -463,20 +672,34 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 | 항목 | 근거 |
 | --- | --- |
 | `harness-eval-001` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_001_CHECK_NAMES` (25항목) |
+| `harness-eval-002` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_002_CHECK_NAMES` (35항목) |
 | 보존된 대표 결과가 현재 판정 코드에서도 전부 PASS | `reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/` |
 | 모든 시나리오의 task / fault / fixture 파일 존재 | `SCENARIOS` 정의 |
 | 시나리오별 설치 경로가 서로 겹치지 않음 | `SCENARIOS` 정의 |
-| `plan_snapshots` 시나리오의 결함이 `precheck` 를 갖고 계획 범위 밖을 대상으로 함 | 결함 정의 |
+| `replan_checks` 시나리오의 결함이 `precheck` 를 갖고 계획 범위 밖을 대상으로 함 | 결함 정의 |
+| 즉시 종료 시나리오의 삭제 대상이 설치 목록 안이고 `precheck_fs` 를 갖춤 | 결함 정의 |
+| 즉시 종료 시나리오의 기대 종료 상태가 라우팅 규칙과 일치 | `SCENARIOS` 정의 |
 | plan / change-log 파서가 목록 항목만 인식 | 보존된 대표 결과의 실제 산출물 |
 
 결함 제거 여부, 테스트 약화 여부, git 상태는 실행 환경에 의존하므로 replay 대상이 아니다.
 항목 이름과 순서만 유지하고 판정은 건너뛴다. 이 세 항목은 라이브 실행으로만 검증된다.
 
+아직 대표 결과가 없는 시나리오(`harness-eval-003`)는 replay 대상이 아니다. 정의가 실제 파일 및
+운영 라우팅 규칙과 맞물려 있는지만 확인한다. 대표 결과를 승격한 뒤 `REGRESSION_EXAMPLES` 에
+골든 목록과 함께 추가한다.
+
+승격된 대표 결과에 시나리오가 요구하는 산출물이 빠져 있으면 판정 replay는 성립하지 않는다.
+이때는 조용히 넘어가지 않고 `판정 replay 범위` 항목에 무엇이 없어서 어디까지만 대조했는지를
+남긴다. 현재 `harness-eval-002` 의 대표 결과가 여기에 해당한다. (`plan-1.md` / `plan-2.md` 누락)
+
 ---
 
-## 9. 새로운 결함 추가
+## 10. 새로운 결함 추가
 
 `evals/faults/<fault_id>.py` 에 다음을 정의하면 `--fault <fault_id>` 로 선택할 수 있다.
+결함 유형은 두 가지다. `FAULT_KIND` 를 생략하면 제품 코드 주입(`code_injection`)으로 본다.
+
+### 10-1. `code_injection` — 제품 코드에 결함을 덧붙인다
 
 | 이름 | 필수 | 설명 |
 | --- | --- | --- |
@@ -492,9 +715,26 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 
 `retry_001` 처럼 `precheck` 가 없으면 호출되지 않으므로 기존 결함 정의는 그대로 동작한다.
 
+### 10-2. `resource_removal` — 설치된 런타임 리소스를 삭제한다
+
+| 이름 | 필수 | 설명 |
+| --- | --- | --- |
+| `FAULT_KIND` | O | `"resource_removal"` |
+| `FAULT_ID` | O | 결함 식별자 |
+| `TARGET_PATH` | O | 삭제 대상 경로. `sample-project/` 안이어야 하고 `installs` 에 있어야 한다 |
+| `MARKER` | O | 삭제 대상이 이번 eval의 fixture 사본인지 내용으로 확인하기 위한 표식 |
+| `DESCRIPTION` | O | 결함 내용 한 줄 설명 |
+| `SYMPTOM` | | 주입 이후 Tester가 보게 되는 증상. `fault-injection.md` 에 기록된다 |
+| `precheck_fs(context)` | O | 삭제 전제 조건 검사. 위반 시 `ValueError` |
+| `is_applied(context)` | | 이미 삭제되었는지 판정 |
+
+`context` 는 `target` / `installed` / `tracked` / `exists` / `content` 를 담은 dict다.
+실제 삭제는 `eval_harness.py` 가 §3-10의 조건을 함께 확인한 뒤 수행한다.
+결함 정의는 무엇을 지울지와 지워도 되는 조건만 선언한다.
+
 ---
 
-## 10. 새로운 시나리오 추가
+## 11. 새로운 시나리오 추가
 
 `eval_harness.py` 의 `SCENARIOS` 에 `Scenario` 항목 하나를 추가한다. 절차 코드는 고치지 않는다.
 
@@ -507,8 +747,16 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 | `expected_category` | Tester 1차가 기록해야 하는 실패 원인 분류 |
 | `expected_failing_token` | `test-result-1.md` 에 남아야 하는 실패 테스트 식별 문자열 |
 | `transition` | `eval-result.md` 에 기록할 검증 대상 전이 |
+| `outcome` | 종료 형태 (선택, 기본값 `SUCCESS_AFTER_RETRY`). 즉시 종료는 `BLOCKED` |
+| `expected_retry_count` | `state.json` 의 기대 `retry_count` (선택, 기본값 1) |
+| `expected_attempts` | `state.json` 의 기대 `attempts` 개수 (선택, 기본값 2) |
+| `expected_blocked_reason` | 즉시 종료 시 기대 `blocked_reason` (선택) |
+| `forbidden_artifacts` | 즉시 종료 시 존재하면 안 되는 (산출물, 주체) 목록 (선택) |
+| `failing_token_check_name` | 실패 증상 기록 항목의 이름 (선택) |
 | `expected_plan1_allowed` | Planner 1차가 확정해야 하는 수정 허용 파일 목록 (선택) |
-| `plan_snapshots` | `plan-1.md` / `plan-2.md` 를 남기고 Planner 재호출을 검증할지 (선택) |
+| `snapshot_plan` | inject 시점에 `plan-1.md` 스냅샷을 남길지 (선택) |
+| `replan_checks` | Planner 재호출(재계획) 전이를 검증할지 (선택, `snapshot_plan` 전제) |
+| `promoted_files` | 승격 시 필수인 산출물 (선택, 비우면 기본 목록) |
 | `extra_promoted_files` | 승격 시 함께 복사할 추가 산출물 (선택) |
 
 추가한 뒤에는 반드시 `selftest` 로 기존 시나리오의 회귀를 확인한다.
