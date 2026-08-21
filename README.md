@@ -212,6 +212,8 @@ uv run pytest sample-project/tests -q
 | BUG-003 | 동전 단위 정산 · 다중 결함 | SUCCESS | 1 | 0 |
 | BUG-004 | 정산 대조 · 이체 잔액 | SUCCESS | 1 | 0 |
 
+<sub>이 네 건의 운영 실행 산출물은 `reports/` gitignore 정책에 따라 저장소에 포함되지 않습니다. 저장소에 공개된 검증 증거는 `reports/examples/` 에 보존된 EVAL-001~004 대표 결과입니다.</sub>
+
 네 건 모두 `STATUS: PASS` + `VERDICT: APPROVED`로 `SUCCESS` 판정을 받았습니다.
 
 **그런데 여기서 문제가 드러났습니다.** 네 건 모두 `retry_count = 0`입니다. 즉 **재시도 상태 머신이 한 번도 실행되지 않았습니다.** 설계한 FAIL 라우팅, 재시도 예산, 재수정 루프는 코드로만 존재할 뿐 실제로 지나간 적이 없는 경로였습니다.
@@ -618,7 +620,7 @@ patchpilot/
 **측정 및 연동**
 
 - Baseline(Claude Code 단독) vs Harness 정량 비교 — 성공률, 재시도 횟수, 범위 이탈 횟수
-- 실행 Dashboard — 단계별 상태, 실행 시간, Token 사용량
+- 실시간 실행 Dashboard — 실행 중 단계 상태, 실행 시간, Token 사용량. 현재 Dashboard는 실행이 끝난 뒤 보존된 대표 결과를 읽는 정적 사이트이므로 목적이 다릅니다
 - GitHub Issue 연동 및 Pull Request 자동화
 - MCP 기반 외부 개발 도구 연동
 

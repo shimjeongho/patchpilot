@@ -577,13 +577,13 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 
 ## 22. 향후 Harness 보강 (TODO)
 
-다음 항목은 아직 구현하지 않았으며 이후 단계에서 추가합니다.
+다음은 Harness 보강 항목이며, 구현이 끝난 항목은 `[x]` 로 표시합니다.
 
 * [ ] `.claude/settings.json` — Tester/Reviewer의 Bash 허용 명령을 `uv run pytest` 및 git 읽기 명령으로 제한
 * [ ] `PreToolUse` Hook — `sample-project/tests/` 하위 파일에 대한 Developer의 쓰기 차단
 * [ ] `PreToolUse` Hook — `plan.md`의 수정 허용 파일 목록 밖 쓰기 차단
-* [ ] `/patchpilot` 커맨드 — Orchestrator 실행 절차의 고정
-* [ ] `sample-project/` 및 `tasks/BUG-XXX.md` 구성
+* [x] `/patchpilot` 커맨드 — Orchestrator 실행 절차의 고정
+* [x] `sample-project/` 및 `tasks/BUG-XXX.md` 구성
 
 현재 단계에서는 위 제약을 도구 권한(`tools:`)과 각 Agent의 금지 사항으로 통제합니다.
 
