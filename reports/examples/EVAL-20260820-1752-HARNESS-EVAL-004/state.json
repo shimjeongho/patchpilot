@@ -1,0 +1,39 @@
+{
+  "run_id": "RUN-20260820-1752-HARNESS-EVAL-004",
+  "task": "evals/fixtures/HARNESS-EVAL-004.md",
+  "status": "BLOCKED",
+  "current_stage": "DONE",
+  "retry_count": 3,
+  "retry_budget": 3,
+  "unknown_retry_used": false,
+  "started_at": "2026-08-20T17:52",
+  "finished_at": "2026-08-20T18:07",
+  "start_commit": "348939abaff0f59bb3f53e6015ba1ddb52992551",
+  "start_dirty_files": [],
+  "attempts": [
+    {
+      "n": 1,
+      "change_log": "change-log-1.md",
+      "test_result": "test-result-1.md",
+      "status": "FAIL",
+      "failure_category": "PRODUCT_CODE_DEFECT"
+    },
+    {
+      "n": 2,
+      "change_log": "change-log-2.md",
+      "test_result": "test-result-2.md",
+      "status": "FAIL",
+      "failure_category": "PRODUCT_CODE_DEFECT"
+    },
+    {
+      "n": 3,
+      "change_log": "change-log-3.md",
+      "test_result": "test-result-3.md",
+      "status": "FAIL",
+      "failure_category": "PRODUCT_CODE_DEFECT"
+    }
+  ],
+  "review": { "verdict": null, "file": null },
+  "final_status": "BLOCKED",
+  "blocked_reason": "RETRY_BUDGET_EXCEEDED"
+}
