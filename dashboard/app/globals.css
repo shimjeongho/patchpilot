@@ -1,0 +1,1409 @@
+/* PatchPilot Dashboard — 단일 스타일시트.
+   GitHub / Vercel / Observability 도구 계열의 다크 개발자 도구 UI 를 기본으로 한다.
+   MVP 범위에서 CSS 프레임워크를 두지 않고 토큰 + 소수의 컴포넌트 클래스로 유지한다.
+
+   색은 장식이 아니라 상태에만 쓴다.
+   ok(성공) / fail(중단·실패) / warn(재시도·재계획) / neutral(링크·Orchestrator) 네 계열만
+   사용하고, Agent 구분은 색이 아니라 글자 마크와 라벨 칩으로 한다. */
+
+:root {
+  /* 포트폴리오 공개용 화면이라 방문자 OS 설정과 무관하게 같은 화면을 보여준다. */
+  color-scheme: dark;
+
+  --bg: #0a0c10;
+  --surface: #11151b;
+  --surface-2: #161b22;
+  --surface-3: #1c222b;
+  --border: #222932;
+  --border-strong: #333c48;
+
+  --text: #e6eaf0;
+  --text-muted: #96a1b0;
+  --text-faint: #6d7683;
+
+  --ok: #3fb950;
+  --fail: #f85149;
+  --warn: #d29922;
+  --neutral: #6e9bf5;
+  --muted: #8b95a3;
+
+  --ok-bg: color-mix(in srgb, var(--ok) 13%, var(--surface));
+  --fail-bg: color-mix(in srgb, var(--fail) 13%, var(--surface));
+  --warn-bg: color-mix(in srgb, var(--warn) 13%, var(--surface));
+  --neutral-bg: color-mix(in srgb, var(--neutral) 13%, var(--surface));
+  --muted-bg: var(--surface-3);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shell: 1280px;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Pretendard",
+    "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: inherit;
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--neutral) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--neutral);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* --- 셸 ------------------------------------------------------------------ */
+
+.container {
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 30px 28px 88px;
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.site-header__inner {
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: 12px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* 브랜드 계층: 마크 → PatchPilot → Harness Evaluation Dashboard */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.brand__mark {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border: 1px solid color-mix(in srgb, var(--neutral) 32%, transparent);
+}
+
+.brand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.brand__name {
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.brand__tagline {
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.site-header__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+  flex-wrap: wrap;
+}
+
+.site-header__meta code {
+  color: var(--text-muted);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 22px 28px 30px;
+  text-align: center;
+}
+
+/* --- 페이지 머리 ---------------------------------------------------------- */
+
+.page-head {
+  margin-bottom: 26px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-head__title {
+  font-size: 25px;
+  font-weight: 660;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.page-head__meta {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-family: var(--mono);
+  line-height: 1.75;
+  margin: 0;
+  word-break: break-all;
+}
+
+/* Artifact 뷰어의 제목은 파일명 그 자체라 monospace 로 둔다. */
+.page-head__title--file {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.breadcrumb {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.breadcrumb a {
+  text-decoration: none;
+  color: var(--text-muted);
+  border-bottom: 1px solid transparent;
+}
+
+.breadcrumb a:hover {
+  color: var(--neutral);
+  border-bottom-color: color-mix(in srgb, var(--neutral) 50%, transparent);
+}
+
+/* --- 섹션 ---------------------------------------------------------------- */
+
+.section {
+  margin-top: 36px;
+}
+
+.section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.section__title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* 섹션 제목 앞의 짧은 눈금. 화면을 스캔할 때 블록 시작점을 잡아 준다. */
+.section__title::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.section__aside {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.card--pad {
+  padding: 15px 18px;
+}
+
+.note {
+  color: var(--text-faint);
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin: 12px 0 0;
+}
+
+.note code {
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* --- 지표 카드 ------------------------------------------------------------ */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 15px 17px 16px;
+  overflow: hidden;
+}
+
+/* 상태 계열 카드만 왼쪽에 얇은 색 눈금을 둔다. 중립 카드는 색을 쓰지 않는다. */
+.stat::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+}
+
+.stat--ok::before {
+  background: var(--ok);
+}
+
+.stat--fail::before {
+  background: var(--fail);
+}
+
+.stat--warn::before {
+  background: var(--warn);
+}
+
+.stat__label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.stat__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: none;
+}
+
+.stat--ok .stat__dot {
+  background: var(--ok);
+}
+
+.stat--fail .stat__dot {
+  background: var(--fail);
+}
+
+.stat--warn .stat__dot {
+  background: var(--warn);
+}
+
+.stat__value {
+  font-size: 34px;
+  font-weight: 640;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+}
+
+.stat--ok .stat__value {
+  color: var(--ok);
+}
+
+.stat--fail .stat__value {
+  color: var(--fail);
+}
+
+.stat--warn .stat__value {
+  color: var(--warn);
+}
+
+.stat__sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+/* --- 배지 ---------------------------------------------------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  line-height: 1.55;
+}
+
+.badge--ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: color-mix(in srgb, var(--ok) 34%, transparent);
+}
+
+.badge--fail {
+  color: var(--fail);
+  background: var(--fail-bg);
+  border-color: color-mix(in srgb, var(--fail) 34%, transparent);
+}
+
+.badge--warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: color-mix(in srgb, var(--warn) 34%, transparent);
+}
+
+.badge--neutral {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border-color: color-mix(in srgb, var(--neutral) 30%, transparent);
+}
+
+.badge--muted {
+  color: var(--muted);
+  background: var(--muted-bg);
+  border-color: var(--border);
+}
+
+/* --- 재시도 게이지 --------------------------------------------------------- */
+
+.gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gauge__cells {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.gauge__cell {
+  width: 16px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+}
+
+.gauge--compact .gauge__cell {
+  width: 11px;
+  height: 7px;
+}
+
+.gauge__cell.is-used {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
+/* 예산을 모두 쓴 순간은 경고가 아니라 종료 조건이므로 색 계열을 바꾼다. */
+.gauge__cell.is-exhausted {
+  background: var(--fail);
+  border-color: var(--fail);
+}
+
+.gauge__text {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gauge__text.is-exhausted {
+  color: var(--fail);
+  font-weight: 680;
+}
+
+/* --- 표 ------------------------------------------------------------------ */
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.data th,
+table.data td {
+  text-align: left;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+table.data thead th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  font-weight: 650;
+}
+
+table.data tbody tr:last-child td {
+  border-bottom: none;
+}
+
+table.data tbody tr {
+  transition: background 90ms linear;
+}
+
+table.data tbody tr:hover {
+  background: var(--surface-2);
+}
+
+/* hover 시 왼쪽에 얇은 표시선. 행 단위 스캔이 쉬워진다. */
+table.data tbody tr:hover td:first-child {
+  box-shadow: inset 2px 0 0 var(--neutral);
+}
+
+table.data td.wrap {
+  white-space: normal;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--neutral);
+  font-weight: 640;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  border-bottom: 1px solid transparent;
+}
+
+.row-link:hover {
+  border-bottom-color: color-mix(in srgb, var(--neutral) 55%, transparent);
+}
+
+/* --- Agent lane / Artifact 목록 -------------------------------------------- */
+
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.lane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  transition: border-color 90ms linear, background 90ms linear;
+}
+
+a.lane {
+  text-decoration: none;
+}
+
+a.lane:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.lane__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+.lane--skipped {
+  border-style: dashed;
+  background: transparent;
+}
+
+.lane--skipped .lane__dot {
+  background: transparent;
+  border: 1.5px dashed var(--border-strong);
+}
+
+.lane__name {
+  font-weight: 620;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lane__name.mono {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.lane--skipped .lane__name {
+  color: var(--text-faint);
+  font-weight: 520;
+}
+
+.lane__meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+/* --- Timeline ------------------------------------------------------------ */
+
+.timeline__warning {
+  background: var(--fail-bg);
+  color: var(--fail);
+  border: 1px solid color-mix(in srgb, var(--fail) 45%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  margin: 0 0 14px;
+}
+
+.timeline__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+/* 레일: 노드 마커의 중심을 지나는 세로선. */
+.timeline__list::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 18px;
+  bottom: 18px;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--border) 14px,
+    var(--border) calc(100% - 14px),
+    transparent
+  );
+}
+
+.tl {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 150px;
+  gap: 14px;
+  align-items: start;
+  padding: 7px 0;
+}
+
+.tl__mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  position: relative;
+  z-index: 1;
+  margin-top: 6px;
+}
+
+.tl--ok .tl__mark {
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.tl--fail .tl__mark {
+  border-color: color-mix(in srgb, var(--fail) 55%, transparent);
+  background: var(--fail-bg);
+  color: var(--fail);
+}
+
+.tl--warn .tl__mark {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.tl--neutral .tl__mark {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.tl--muted .tl__mark,
+.tl--skipped .tl__mark {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.tl__body {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 14px;
+  min-width: 0;
+}
+
+/* Tester 판정과 Orchestrator 라우팅은 나머지보다 한 단계 강조한다. */
+.tl--tester.tl--fail .tl__body,
+.tl--orchestrator.tl--fail .tl__body {
+  border-color: color-mix(in srgb, var(--fail) 40%, transparent);
+  box-shadow: inset 3px 0 0 var(--fail);
+}
+
+.tl--tester.tl--ok .tl__body {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+.tl--orchestrator.tl--warn .tl__body {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+/* 재계획 노드(EVAL-002)는 흐름의 분기점이라 따로 세운다. */
+.tl.is-replan .tl__body {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 7%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+/* 예산이 소진되는 순간(EVAL-004의 2 → 3)은 종료가 확정되는 지점이다. */
+.tl.is-exhausted .tl__body {
+  border-color: color-mix(in srgb, var(--fail) 55%, transparent);
+  background: color-mix(in srgb, var(--fail) 8%, var(--surface));
+}
+
+.tl--terminal .tl__body {
+  padding: 14px 16px;
+}
+
+.tl--terminal.tl--ok .tl__body {
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: color-mix(in srgb, var(--ok) 9%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+.tl--terminal.tl--fail .tl__body {
+  border-color: color-mix(in srgb, var(--fail) 55%, transparent);
+  background: color-mix(in srgb, var(--fail) 9%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--fail);
+}
+
+.tl--terminal .tl__label {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.tl--terminal.tl--ok .tl__label {
+  color: var(--ok);
+}
+
+.tl--terminal.tl--fail .tl__label {
+  color: var(--fail);
+}
+
+/* 실행되지 않은 단계: 점선 + 낮은 대비로 부재를 그대로 둔다. */
+.tl--skipped .tl__body {
+  background: transparent;
+  border-style: dashed;
+  padding: 9px 14px;
+}
+
+.tl__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.tl__actor {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 700;
+  font-family: var(--mono);
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* Fault Injection 과 Orchestrator 는 Agent 가 아니라 Harness 의 개입이라 칩만 구분한다. */
+.tl--fault .tl__actor {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.tl--orchestrator .tl__actor {
+  color: var(--neutral);
+  background: var(--neutral-bg);
+  border-color: color-mix(in srgb, var(--neutral) 30%, transparent);
+}
+
+.tl--skipped .tl__actor {
+  border-style: dashed;
+  background: transparent;
+}
+
+.tl__label {
+  font-weight: 640;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+}
+
+.tl--skipped .tl__label {
+  color: var(--text-faint);
+  font-weight: 520;
+}
+
+/* "실행되지 않은 단계" 표식. 점선 구조만으로는 의도가 덜 드러난다. */
+.tl__flag {
+  font-size: 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.tl__line {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.tl--skipped .tl__line {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* 계획의 허용 파일처럼 본문에 섞인 파일명은 코드로 세워야 눈에 들어온다. */
+.tl__file {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.tl.is-replan .tl__file {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+}
+
+.tl__links {
+  margin-top: 9px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tl__link {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-decoration: none;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  transition: color 90ms linear, border-color 90ms linear;
+}
+
+.tl__link:hover {
+  color: var(--neutral);
+  border-color: color-mix(in srgb, var(--neutral) 45%, transparent);
+}
+
+.tl__retry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  padding-top: 12px;
+  min-width: 0;
+}
+
+.tl__retry-label {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+/* retry 0 → 1 → 2 → 3 진행이 세로로 정렬돼야 예산 소진이 한눈에 읽힌다. */
+.tl__retry-delta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl__retry-delta b {
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.tl.is-exhausted .tl__retry-delta b {
+  color: var(--fail);
+}
+
+/* --- Artifact 뷰어 -------------------------------------------------------- */
+
+.viewer {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+
+.sidebar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  position: sticky;
+  top: 72px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+.sidebar__group {
+  margin-bottom: 14px;
+}
+
+.sidebar__group:last-child {
+  margin-bottom: 0;
+}
+
+.sidebar__title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin: 0 0 6px;
+  padding: 0 6px;
+}
+
+.sidebar__item {
+  display: block;
+  padding: 5px 9px;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-decoration: none;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar__item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.sidebar__item.is-active {
+  background: var(--neutral-bg);
+  color: var(--neutral);
+  font-weight: 650;
+  box-shadow: inset 2px 0 0 var(--neutral);
+}
+
+.sidebar__alias {
+  padding: 4px 9px 2px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+/* --- 산출물 본문 ---------------------------------------------------------- */
+
+.prose {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px 28px;
+  overflow-wrap: break-word;
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.prose > :last-child {
+  margin-bottom: 0;
+}
+
+.prose h1 {
+  font-size: 20px;
+  font-weight: 660;
+  letter-spacing: -0.02em;
+  margin: 28px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prose h2 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 28px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.prose h3 {
+  font-size: 14px;
+  font-weight: 650;
+  margin: 22px 0 8px;
+  color: var(--text);
+}
+
+.prose h4 {
+  font-size: 13px;
+  font-weight: 650;
+  margin: 18px 0 6px;
+  color: var(--text-muted);
+}
+
+.prose p,
+.prose li {
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.prose li {
+  margin: 3px 0;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 22px;
+}
+
+.prose strong {
+  color: var(--text);
+  font-weight: 680;
+}
+
+.prose a {
+  color: var(--neutral);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--neutral) 40%, transparent);
+}
+
+/* 산출물은 파일명·명령·상태 토큰이 대부분이라 인라인 코드를 또렷하게 세운다. */
+.prose code {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--neutral) 55%, var(--text));
+}
+
+.prose pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  tab-size: 2;
+}
+
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+  margin: 14px 0;
+}
+
+.prose th,
+.prose td {
+  border: 1px solid var(--border);
+  padding: 7px 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.prose th {
+  background: var(--surface-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 650;
+}
+
+.prose blockquote {
+  margin: 14px 0;
+  padding: 2px 16px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 24px 0;
+}
+
+/* JSON 원문은 문서가 아니라 데이터라서 블록 전체를 monospace 로 다룬다. */
+.prose--raw {
+  padding: 0;
+  background: var(--surface-2);
+}
+
+.prose--raw pre {
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 18px 20px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text);
+}
+
+/* eval-result.md 의 "검증 대상 전이" 원문 블록. */
+.transition {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+
+/* --- 접이식 검증 목록 ------------------------------------------------------ */
+
+details.checks {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 13px 17px;
+}
+
+details.checks summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 620;
+  color: var(--text-muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+details.checks summary::-webkit-details-marker {
+  display: none;
+}
+
+details.checks summary::before {
+  content: '▸';
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+details.checks[open] summary::before {
+  content: '▾';
+}
+
+details.checks[open] summary {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.checks__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+.checks__item {
+  display: grid;
+  grid-template-columns: 30px 58px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  align-items: start;
+}
+
+.checks__item:first-child {
+  border-top: none;
+}
+
+.checks__no {
+  font-family: var(--mono);
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-align: right;
+}
+
+.checks__evidence {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  margin: 3px 0 0;
+  word-break: break-word;
+}
+
+/* --- Responsive ---------------------------------------------------------- */
+
+/* 1280px 근처: 셸 여백만 줄이고 구조는 유지한다. */
+@media (max-width: 1320px) {
+  .container {
+    padding: 28px 22px 80px;
+  }
+
+  .site-header__inner {
+    padding: 12px 22px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .viewer {
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 20px;
+  }
+}
+
+@media (max-width: 860px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: static;
+    max-height: none;
+  }
+
+  /* retry 열을 본문 아래로 접어 본문 폭을 확보한다. */
+  .tl {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .tl__retry {
+    grid-column: 2;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 0;
+    gap: 10px;
+  }
+
+  .tl__retry:empty {
+    display: none;
+  }
+
+  .tl__retry-label {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .container {
+    padding: 22px 16px 64px;
+  }
+
+  .site-header__inner {
+    padding: 10px 16px;
+  }
+
+  .site-header__meta {
+    display: none;
+  }
+
+  .stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-head__title {
+    font-size: 21px;
+  }
+
+  .prose {
+    padding: 18px 16px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
