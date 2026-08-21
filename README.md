@@ -10,6 +10,10 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 
 실제 Harness 실행 결과(Fault Injection Eval 4종)의 상태 전이와 Agent 산출물을 브라우저에서 바로 확인할 수 있습니다.
 
+[![PatchPilot Dashboard Overview](docs/images/dashboard-overview.png)](https://patchpilot-five.vercel.app)
+
+<sub>Eval 4종의 최종 상태 · 소비한 재시도 예산 · 자동 검증 통과 수를 한 화면에서 보여줍니다. 모든 수치는 `reports/examples/` 의 `state.json` 과 `eval-result.md` 에서 빌드 타임에 읽은 값입니다. 이미지를 클릭하면 Live Demo로 이동합니다.</sub>
+
 ---
 
 ## 📌 왜 만들었는가
@@ -375,6 +379,10 @@ Developer 3차(C 제거) → 결함 D 주입 → Tester 3차 FAIL / PRODUCT_CODE
   → Developer 4차 / Tester 4차 / Reviewer 미호출
   → BLOCKED (blocked_reason = RETRY_BUDGET_EXCEEDED)
 ```
+
+[![HARNESS-EVAL-004 — 재시도 예산 소진 후 BLOCKED 종료](docs/images/eval-004-blocked.png)](https://patchpilot-five.vercel.app)
+
+<sub>EVAL-004 Timeline의 종료 구간입니다. Tester 3차 `STATUS: FAIL` 직후 Orchestrator가 `retry_count(3) >= retry_budget(3)` 로 판단해 **추가 Agent 재호출 없이** `RETRY_BUDGET_EXCEEDED` 로 종료합니다. 호출되지 않은 Planner 2차 · Developer 4차 · Tester 4차 · Reviewer는 빈칸이 아니라 **"미호출 (자동 검증됨)"** 으로 표시됩니다. Planner부터 이어지는 전체 Timeline은 [Live Demo](https://patchpilot-five.vercel.app)에서 확인할 수 있습니다.</sub>
 
 | 항목 | 결과 |
 | --- | --- |
