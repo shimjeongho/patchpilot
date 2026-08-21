@@ -58,3 +58,14 @@ reports/*
 # ==============================
 
 evals/.eval-run/
+
+
+# ==============================
+# Dashboard (Next.js)
+# ==============================
+
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/next-env.d.ts
+dashboard/*.tsbuildinfo

@@ -496,6 +496,33 @@ uv run python evals/eval_harness.py selftest   # EVAL: PASS (40/40)
 
 ---
 
+## 📊 Dashboard
+
+`reports/examples/`에 보존된 대표 결과를 읽어 Harness의 상태 전이를 보여주는 정적 대시보드입니다. Next.js App Router의 Server Component에서 Markdown/JSON을 **빌드 타임에 직접 읽고** 정적 HTML로 내보냅니다. 서버도 DB도 API도 없습니다.
+
+```bash
+cd dashboard
+npm install
+npm run dev      # http://localhost:3000
+npm run build    # out/ 에 정적 HTML 생성
+```
+
+보여주는 것:
+
+| 화면 | 내용 |
+| --- | --- |
+| Overview | Total / SUCCESS / BLOCKED / 총 Attempts / 총 Retry + Eval 목록 |
+| Eval Detail | 상태 전이 Timeline · Agent 실행 여부 · Attempt별 STATUS와 retry_count 변화 · 자동 검증 항목 |
+| Artifact Viewer | `plan-N.md` · `change-log-N.md` · `test-result-N.md` · `fault-injection-N.md` · `review.md` · `report.md` · `state.json` · `eval-result.md` |
+
+Timeline이 핵심입니다. `state.json`만으로는 전이를 그릴 수 없기 때문입니다. **EVAL-002의 Planner 재호출은 `state.json` 어디에도 기록되지 않고 `plan-2.md`라는 산출물의 존재로만 드러납니다.** 그래서 `state.json` + 산출물 존재 여부 + 결함 주입 기록을 합성해 전이를 만들고, 재시도 예산 누적은 `CLAUDE.md §16`을 그대로 따라 계산한 뒤 **`state.json`의 `retry_count`와 대조합니다.** 어긋나면 표시값을 덮어쓰지 않고 화면에 경고로 드러냅니다.
+
+호출되지 않은 Agent는 빈칸으로 두지 않습니다. EVAL-003의 Reviewer 미호출은 Harness가 멈춘 것이 아니라 `ENVIRONMENT_ERROR` 라우팅 규칙대로 부르지 않은 것이고, `eval-result.md`가 그 부재를 자동 검증 항목으로 판정해 두었습니다. 대시보드는 그 판정을 읽어 **"미호출 (자동 검증됨)"**으로 표시합니다.
+
+`dashboard/`는 Harness 영역도 수정 대상 영역도 아닌 **읽기 전용 소비자**입니다. `reports/examples/`를 읽기만 하고, `evals/eval_harness.py`를 import하지 않으며(같은 파일 계약을 독립 구현), Python 의존성을 추가하지 않습니다. 자세한 내용은 [`dashboard/README.md`](dashboard/README.md)에 있습니다.
+
+---
+
 ## 📁 Repository Structure
 
 ```text
@@ -523,6 +550,11 @@ patchpilot/
 ├── reports/                      실행 산출물 (gitignore)
 │   └── examples/                 검증 통과한 대표 실행 결과 (커밋됨)
 │
+├── dashboard/                    Eval 결과 대시보드 (읽기 전용 소비자)
+│   ├── app/                      Overview · Eval Detail · Artifact Viewer
+│   ├── components/               Ui · Timeline · Markdown
+│   └── lib/                      types · parse · evals · timeline
+│
 ├── pyproject.toml
 ├── uv.lock
 └── README.md
@@ -543,6 +575,7 @@ patchpilot/
 | Language | Python 3.12 |
 | Testing | pytest |
 | 환경·의존성 관리 | uv (`pyproject.toml`, `uv.lock`) |
+| Dashboard | Next.js 15 (App Router, `output: 'export'`), TypeScript, React 19 |
 | Version Control | Git, GitHub |
 
 ---
