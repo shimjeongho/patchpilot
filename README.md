@@ -6,6 +6,10 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 
 이 저장소의 결과물은 "Claude Code로 개발한 애플리케이션"이 아니라 **"Claude Code Agent가 안정적으로 개발 작업을 수행하도록 만든 통제 구조"** 그 자체입니다. Agent가 무엇을 할 수 있고, 무엇을 판정할 권한이 있으며, 실패했을 때 어디로 가는지를 규칙·도구 권한·파일 소유권으로 정의했습니다.
 
+**🔗 Dashboard Live Demo — https://patchpilot-five.vercel.app**
+
+실제 Harness 실행 결과(Fault Injection Eval 4종)의 상태 전이와 Agent 산출물을 브라우저에서 바로 확인할 수 있습니다.
+
 ---
 
 ## 📌 왜 만들었는가
@@ -499,6 +503,10 @@ uv run python evals/eval_harness.py selftest   # EVAL: PASS (40/40)
 ## 📊 Dashboard
 
 `reports/examples/`에 보존된 대표 결과를 읽어 Harness의 상태 전이를 보여주는 정적 대시보드입니다. Next.js App Router의 Server Component에서 Markdown/JSON을 **빌드 타임에 직접 읽고** 정적 HTML로 내보냅니다. 서버도 DB도 API도 없습니다.
+
+배포된 대시보드는 여기서 바로 볼 수 있습니다. **[Dashboard Live Demo](https://patchpilot-five.vercel.app)**
+
+로컬에서 실행하려면:
 
 ```bash
 cd dashboard
