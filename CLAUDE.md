@@ -579,13 +579,17 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 
 다음은 Harness 보강 항목이며, 구현이 끝난 항목은 `[x]` 로 표시합니다.
 
-* [ ] `.claude/settings.json` — Tester/Reviewer의 Bash 허용 명령을 `uv run pytest` 및 git 읽기 명령으로 제한
-* [ ] `PreToolUse` Hook — `sample-project/tests/` 하위 파일에 대한 Developer의 쓰기 차단
-* [ ] `PreToolUse` Hook — `plan.md`의 수정 허용 파일 목록 밖 쓰기 차단
+* [x] `PreToolUse` Hook — Tester/Reviewer의 Bash를 역할별 화이트리스트로 제한 (`guard_bash_scope.py`)
+* [x] `PreToolUse` Hook — `sample-project/tests/` 하위 파일에 대한 Developer의 쓰기 차단 (`guard_test_files.py`)
+* [x] `PreToolUse` Hook — `plan.md`의 수정 허용 파일 목록 밖 쓰기 차단 (`guard_plan_scope.py`)
+* [x] `Stop` Hook — 종료 선언과 산출물의 모순 대조 (`guard_stop_gate.py`, §25)
 * [x] `/patchpilot` 커맨드 — Orchestrator 실행 절차의 고정
 * [x] `sample-project/` 및 `tasks/BUG-XXX.md` 구성
+* [ ] `PreToolUse` Hook — `reports/<run-id>/` 쓰기 주체 제한 (state.json / report.md는 Orchestrator만)
 
-현재 단계에서는 위 제약을 도구 권한(`tools:`)과 각 Agent의 금지 사항으로 통제합니다.
+Hook이 담당하지 않는 제약은 도구 권한(`tools:`)과 각 Agent의 금지 사항으로 통제합니다.
+Hook 판정 로직은 `evals/tests/` 에서 단위 검증되며, 판정을 건너뛰어야 할 때는
+`PATCHPILOT_DISABLED_HOOKS` 환경변수에 Hook ID를 넣습니다.
 
 ---
 
@@ -693,3 +697,56 @@ source .venv/bin/activate
 * Developer는 의존성을 임의로 추가하지 않습니다. 필요하다고 판단되면 `change-log-N.md`에 사유만 기록하고 중단합니다. (§3-7)
 * Tester는 §10의 고정 명령어 외의 방식으로 테스트를 실행하지 않습니다.
 * `uv` 실행 자체가 실패하거나 환경 동기화가 불가능한 경우, 제품 코드 결함이 아니라 `ENVIRONMENT_ERROR`로 분류합니다. (§14, §20)
+
+---
+
+## 25. Stop Gate
+
+`Stop` Hook(`.claude/hooks/guard_stop_gate.py`)은 Orchestrator가 종료 상태를 선언한 시점에
+`state.json`과 `reports/<run-id>/` 실제 산출물의 **결정론적 모순**만 대조합니다.
+
+### 역할
+
+Stop Gate는 종료를 강제하는 장치가 아니라 **Final Consistency Guard**입니다.
+모순이 확인되면 해당 user prompt에서 정확히 한 번 종료를 막고 위반 목록을 전달합니다.
+결론(`SUCCESS` / `BLOCKED`)을 대신 내리지 않습니다. 판정 권한은 §19대로 Orchestrator에게 있습니다.
+
+### 실행 귀속
+
+`state.json`의 `session_id`와 Stop payload의 `session_id`가 문자열 완전 일치하는 실행
+하나만 검사합니다. 이 값은 Orchestrator가 `patchpilot.md §1-3`에서
+`printenv CLAUDE_CODE_SESSION_ID`로 읽어 `§1-5`에서 한 번만 기록하며, 이후 덮어쓰지 않습니다.
+서브에이전트는 자기 세션 식별자를 가지므로 이 값을 기록해서는 안 됩니다.
+
+### prompt당 최대 1회 차단
+
+Stop Hook은 차단 이후 이어진 턴이 끝날 때 `stop_hook_active = true`로 다시 호출됩니다.
+Gate는 그 재진입 호출을 무조건 통과시킵니다. 이 분기가 무한 루프를 막는 필수 제어 흐름이며,
+제거하면 `Stop → block → Stop` 이 반복됩니다.
+
+따라서 교정 기회는 **차단 직후 한 턴뿐**입니다. 그 턴에서 다음을 지킵니다.
+
+1. 사실과 다른 값을 맞추려고 `state.json` / `report.md`를 고치지 않습니다.
+2. 누락된 단계가 있으면 그 단계를 수행합니다.
+3. 교정이 불가능하면 §19 규칙으로 최종 상태를 다시 판정합니다.
+4. 사용자 보고에 Stop Gate가 발견한 불일치를 포함합니다.
+
+### 검사하지 않는 것
+
+산출물만으로 정확히 판정할 수 없어 오탐 위험이 있는 항목은 검사하지 않습니다.
+`attempts` 길이와 파일 개수 비교, `failure_category` 재파싱, `attempts` 기반 `retry_count`
+재계산, git 상태, 계획 범위와 실제 diff 대조가 여기에 해당합니다.
+이 중 일부는 `evals/eval_harness.py`가 이미 검증합니다.
+
+### UI 표시
+
+Claude Code는 정책적 차단도 `"Stop hook error occurred · ctrl+o to see"`로 표시합니다.
+Hook 실행 오류와 같은 문구이므로, 이 메시지만으로 Hook 고장을 판단하지 않습니다.
+
+### 비활성화
+
+다른 Hook과 같은 스위치를 씁니다.
+
+```bash
+PATCHPILOT_DISABLED_HOOKS=guard-stop-gate
+```

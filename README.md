@@ -141,7 +141,47 @@ Orchestrator는 메인 Claude Code 세션이 `/patchpilot` 커스텀 커맨드�
 - **Planner와 Reviewer는 제품 코드를 수정할 수 없습니다.** 계획과 검토만 담당합니다.
 - **Orchestrator는 제품 코드와 테스트 파일을 모두 수정하지 않습니다.** 직접 쓰는 파일은 `report.md`와 `state.json` 둘뿐입니다.
 
-> 현재 이 금지 사항 중 일부는 도구 권한으로 완전히 차단되고(예: Developer의 테스트 실행), 일부는 Agent 규칙으로 강제됩니다(예: Tester의 제품 코드 미수정). `PreToolUse` Hook을 통한 경로 단위 쓰기 차단은 아직 구현하지 않았으며 Future Work입니다.
+> 이 금지 사항은 세 층으로 강제됩니다. Agent별 도구 권한(예: Developer는 Bash 자체가 없어 테스트를 실행할 수 없음), `PreToolUse` Hook 3종(경로·명령 단위 차단), 그리고 Agent 규칙입니다. Hook은 `.claude/hooks/` 에 있으며 판정 로직은 `evals/tests/` 에서 단위 검증됩니다.
+
+| Hook | 담당 | 차단 대상 |
+| --- | --- | --- |
+| `guard_test_files.py` | `PreToolUse(Write\|Edit)` | Developer 등 Tester 외 주체의 `sample-project/tests/` 쓰기 |
+| `guard_plan_scope.py` | `PreToolUse(Write\|Edit)` | `plan.md` 의 수정 허용 파일 목록 밖 제품 코드 쓰기 |
+| `guard_bash_scope.py` | `PreToolUse(Bash)` | Tester / Reviewer의 화이트리스트 밖 셸 명령 |
+| `guard_stop_gate.py` | `Stop` | 종료 선언과 산출물이 모순될 때의 턴 종료 (1회) |
+
+---
+
+## 🛑 Stop Gate — 종료 직전 정합성 대조
+
+Orchestrator가 `state.json`에 종료 상태를 선언하는 순간, Claude Code의 `Stop` lifecycle hook에서 그 선언과 `reports/<run-id>/` 실제 산출물을 대조합니다. **오케스트레이터의 종료 선언을 산출물의 결정론적 불변식과 대조하고, 불일치 시 종료 직전에 한 번의 교정 기회를 만듭니다.**
+
+검사하는 것은 "정답"이 아니라 **자기 산출물과의 일치**입니다. 예를 들어 `final_status: "SUCCESS"`인데 `review.md`가 없거나, 마지막 `test-result-N.md`의 첫 줄이 `STATUS: PASS`가 아니거나, `blocked_reason: "RETRY_BUDGET_EXCEEDED"`인데 `retry_count < retry_budget`인 경우입니다. 총 19개(G1~G19)이며, 모두 파일 내용만으로 결정되고 추론이 필요 없는 항목입니다.
+
+반대로 다음은 **의도적으로 검사하지 않습니다.** 산출물만으로는 정확히 판정할 수 없어 오탐이 나기 때문입니다.
+
+- `attempts` 길이와 실제 파일 개수 비교 — eval이 만드는 `plan-1.md` 같은 스냅샷 때문에 정상 실행이 오탐됩니다
+- `failure_category` 재파싱 — Agent가 쓰는 markdown 절을 다시 파싱하면 `eval_harness.py`와 갈라지는 두 번째 파서가 생깁니다
+- `retry_count` 재계산 — Reviewer의 `CHANGES_REQUESTED`는 최종 verdict만 남아서 재구성에 필요한 사실이 산출물에 없습니다
+- git 상태, 계획 범위와 실제 diff 대조 — Reviewer의 담당입니다
+
+### 실행 경로 귀속
+
+`state.json`에 기록된 `session_id`와 Stop payload의 `session_id`가 **문자열 완전 일치**하는 실행 하나만 검사합니다. 값은 Orchestrator가 실행 시작 시점에 `printenv CLAUDE_CODE_SESSION_ID`로 한 번 기록합니다. "가장 최근 실행"이나 파일 수정 시각은 쓰지 않습니다. 귀속되는 실행이 0개거나 2개 이상이면 판단하지 않고 통과시킵니다.
+
+### 한계 — prompt당 최대 1회 차단
+
+Stop hook은 차단 이후 이어진 턴이 끝날 때 `stop_hook_active=true`로 **다시 호출됩니다.** Gate는 그 재진입 호출을 무조건 통과시켜, 한 user prompt 안에서 종료 차단이 반복되지 않도록 합니다. 이 1회 제한은 런타임이 아니라 `guard_stop_gate.py`의 분기가 직접 보장합니다.
+
+따라서 Stop Gate는 "올바를 때까지 막는 장치"가 아니라 **종료 직전 한 번의 교정 기회를 만드는 장치**입니다. 최종 상태의 신뢰성은 이 게이트 하나가 아니라 `/patchpilot` 절차의 단계별 첫 줄 기계 판정, `PreToolUse` Hook 3종, 결정론적 Eval 4종이 함께 만듭니다.
+
+> Claude Code는 정책적 차단도 `"Stop hook error occurred · ctrl+o to see"`로 표시합니다. Hook 실행 오류와 **같은 UI 문구**를 쓰므로, 이 메시지가 보인다고 해서 Hook이 고장 난 것은 아닙니다. 게이트가 정상 동작한 결과일 수 있습니다.
+
+판정을 통과시켜야 하는 상황(예: 사람이 불일치를 인지하고 그대로 두기로 한 경우)에는 다른 Hook과 같은 스위치를 씁니다.
+
+```bash
+PATCHPILOT_DISABLED_HOOKS=guard-stop-gate
+```
 
 ---
 
@@ -614,7 +654,7 @@ patchpilot/
 
 **Harness 강화**
 
-- `PreToolUse` Hook 기반 권한 강제 — 현재 규칙으로 금지하는 경로(예: Developer의 테스트 파일 쓰기)를 도구 수준에서 차단
+- `reports/<run-id>/` 쓰기 주체 강제 — 현재 "state.json과 report.md는 Orchestrator만 쓴다"는 규칙으로만 강제되고 도구 수준 차단은 없습니다
 - Docker 기반 Sandbox 실행 환경
 
 **측정 및 연동**
@@ -636,6 +676,7 @@ PatchPilot에서 중요하게 다룬 것은 AI가 코드를 얼마나 많이 생
 | **최소 권한** | Agent별 도구 권한 축소. Developer는 테스트를 실행할 수 없음 |
 | **상태 머신** | `PLANNING → DEVELOPING → TESTING → REVIEWING → DONE`, 종료 상태는 `SUCCESS` / `BLOCKED` 둘뿐 |
 | **명시적 Artifact** | 숨겨진 대화가 아니라 `reports/<run-id>/` 파일로만 인계 |
+| **종료 정합성 대조** | `Stop` Hook에서 종료 선언과 산출물의 불변식 19개를 대조. 재진입 신호(`stop_hook_active`)로 prompt당 최대 1회만 차단 |
 | **자동 테스트** | 고정 명령으로 전체 테스트 실행. 부분 실행 후 통과 선언 차단 |
 | **실패 원인 분류** | 5종 분류에 따라 행선지가 달라짐. 모든 실패를 같은 방식으로 재시도하지 않음 |
 | **Retry Budget** | 실행 전체에서 3회 공유. 예산을 다 쓰면 성공으로 위장하지 않고 `BLOCKED` — 실제 실행으로 검증 |

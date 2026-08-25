@@ -1053,3 +1053,51 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 | `extra_promoted_files` | 승격 시 함께 복사할 추가 산출물 (선택) |
 
 추가한 뒤에는 반드시 `selftest` 로 기존 시나리오의 회귀를 확인한다.
+
+---
+
+## 13. Stop Gate 검증
+
+`Stop` Hook(`.claude/hooks/guard_stop_gate.py`)은 결함 주입 전이가 아니므로
+`eval_harness.py` 의 `SCENARIOS` 에 넣지 않는다. `harness-eval-00N` 번호를 부여하지 않는다.
+검증은 오프라인 단위 테스트와 수동 라이브 확인 두 층으로 나눈다.
+
+### 13-1. 오프라인 — `evals/tests/test_guard_stop_gate.py`
+
+다른 가드와 같은 방식이다. `decide()` 를 직접 호출해 판정만 확인한다.
+
+```bash
+uv run pytest evals/tests -q
+```
+
+검증 대상은 G1~G19 각각의 정상/위반 경계, fail-open 조건, reason 계약,
+`main()` 의 stdout JSON + exit 0 전달 계약이다.
+
+다음 항목은 **필수 회귀 계약**이다. 지우면 무한 루프가 열린다.
+
+```text
+stop_hook_active == true  ->  ALLOW
+```
+
+### 13-2. 라이브 — 수동 확인 절차
+
+임시 run 을 만들어 실제 Claude Code 경로에서 확인한다.
+`reports/examples/` 의 보존된 대표 결과는 **절대 사용하지 않는다.**
+
+임시 run 은 `reports/RUN-LIVECHECK-*` 형태로 만들고, `state.json` 의 `session_id` 를
+검사에 쓸 세션 UUID 로 채운다. 세션은 `claude -p --session-id <uuid>` 로 고정한다.
+
+| 확인 | 준비 | 기대 |
+| --- | --- | --- |
+| A | 정합한 SUCCESS run | Stop ALLOW (차단 없음) |
+| B | 정합한 BLOCKED run | Stop ALLOW |
+| C | SUCCESS 인데 `review.md` 없음 | Stop BLOCK, reason 에 `[G9]` |
+| D | C 와 동일 | `Stop hook feedback:` 으로 reason 이 assistant 에게 전달됨 |
+| E | C 와 동일 | Stop 훅이 **다시 호출**되고 두 번째 payload 의 `stop_hook_active == true`, Gate 가 ALLOW |
+| F | 같은 세션에서 다음 user prompt | 같은 모순에 다시 1회 차단 (prompt 마다 예산이 리셋됨) |
+
+E 를 확인하려면 payload 를 기록하는 관찰용 훅을 `--settings` 로 함께 등록한다.
+관찰용 훅과 임시 run 은 확인이 끝나면 전부 삭제한다.
+
+확인 후 `reports/RUN-LIVECHECK-*` 를 삭제하고 `git status --short` 로 저장소가
+깨끗한지 확인한다. (`reports/*` 는 `.gitignore` 대상이지만 남겨 두지 않는다.)
