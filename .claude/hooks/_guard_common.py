@@ -18,6 +18,7 @@
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -32,6 +33,39 @@ AGENT_TYPES = frozenset({"planner", "developer", "tester", "reviewer"})
 
 # Developer 의 tools 는 Read/Grep/Glob/Edit/Write 뿐이므로 파일을 쓰는 도구는 둘이다.
 FILE_WRITE_TOOLS = frozenset({"Write", "Edit"})
+
+# Bash 는 Tester 와 Reviewer 만 보유한다. Planner/Developer 의 tools 에는 없다.
+BASH_TOOL = "Bash"
+
+# 셸 합성·치환 요소. 화이트리스트 검사 **이전에** 걸러낸다.
+# 문자열 검사로 셸 문법을 안전하게 해석하는 것은 불가능하므로, 해석을 시도하지 않고
+# 합성 가능성이 있는 문자가 하나라도 보이면 거부한다. 인용부호 안이라도 예외를 두지
+# 않는다. 예외를 두는 순간 "어디까지가 인용부호 안인가" 를 셸과 똑같이 판단해야 한다.
+SHELL_METACHARACTERS = (
+    (">", "출력 리다이렉션"),
+    ("<", "입력 리다이렉션"),
+    ("|", "파이프"),
+    ("&", "백그라운드 실행 / 명령 연결"),
+    (";", "명령 구분자"),
+    ("$", "변수·명령 치환"),
+    ("`", "명령 치환"),
+    ("(", "서브셸"),
+    (")", "서브셸"),
+    ("{", "그룹·중괄호 확장"),
+    ("}", "그룹·중괄호 확장"),
+    ("*", "글로브 확장"),
+    ("?", "글로브 확장"),
+    ("~", "홈 디렉터리 확장"),
+    ("!", "히스토리 확장"),
+    ("#", "주석"),
+    # 백슬래시는 `shlex` 의 POSIX 모드에서 다음 글자를 이스케이프한다. 인용부호 밖의
+    # `sample-project\src\tip.py` 는 `sample-projectsrctip.py` 로 뭉개져서, 검사한
+    # 토큰과 실제로 실행되는 문자열이 달라진다. 뭉개진 채 통과시키느니 거부한다.
+    # 실측된 정상 명령은 Windows 에서도 전부 슬래시를 쓴다.
+    ("\\", "이스케이프"),
+    ("\n", "여러 줄 명령"),
+    ("\r", "캐리지 리턴"),
+)
 
 # 담당 경로. 문자열이 아니라 경로 조각으로 두어 접두사 비교를 쓰지 않는다.
 SAMPLE_PROJECT = ("sample-project",)
@@ -261,3 +295,60 @@ def allowed_lookup(entries: list[str]) -> set[tuple[str, ...]]:
 def matches_allowed(parts: tuple[str, ...], lookup: set[tuple[str, ...]]) -> bool:
     """허용 목록 완전 일치 여부."""
     return tuple(part.casefold() for part in parts) in lookup
+
+
+def bash_command(payload: dict) -> str | None:
+    """Bash 도구 호출의 명령 문자열을 정규화해서 돌려준다. 재료가 없으면 None.
+
+    None 은 "판단할 수 없다" 는 뜻이며 호출자는 통과시켜야 한다. 정규화는 두 가지만
+    한다. CRLF 를 LF 로 바꾸고 앞뒤 공백을 없앤다. 그 밖의 형태 변경은 하지 않는다.
+    가드가 명령을 고쳐 읽으면 실제로 실행되는 문자열과 검사한 문자열이 달라진다.
+    """
+    if payload.get("tool_name") != BASH_TOOL:
+        return None
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    return command.replace("\r\n", "\n").strip()
+
+
+def shell_metacharacter(command: str) -> tuple[str, str] | None:
+    """명령에 셸 합성 요소가 있으면 (문자, 설명) 을, 없으면 None 을 돌려준다.
+
+    `SHELL_METACHARACTERS` 순서대로 찾으므로 같은 명령이면 항상 같은 문자를 보고한다.
+    """
+    for character, description in SHELL_METACHARACTERS:
+        if character in command:
+            return character, description
+    return None
+
+
+def split_bash_tokens(command: str) -> list[str] | None:
+    """명령을 토큰으로 나눈다. 인용부호가 맞지 않으면 None.
+
+    `shlex` 는 메타문자 검사를 통과한 뒤 인용부호를 벗기는 용도로만 쓴다.
+    `shlex` 가 파싱에 성공했다는 사실 자체는 안전의 근거가 아니다.
+    """
+    try:
+        return shlex.split(command, posix=True)
+    except ValueError:
+        return None
+
+
+def repo_relative_arg(argument: str, root: Path) -> tuple[str, ...] | None:
+    """명령 인자를 저장소 기준 경로 조각으로 바꾼다. 저장소 밖이거나 형태가 나쁘면 None.
+
+    `relative_parts()` 의 정규화(드라이브 문자 대소문자, 슬래시 방향, 심볼릭 링크)를
+    그대로 쓰되, `..` 는 `resolve()` 결과가 저장소 안으로 되돌아오더라도 거부한다.
+    읽기 전용 명령이라 실질 피해는 없지만, 허용하면 리뷰어가 경로를 눈으로 대조할 수
+    없게 되어 `CLAUDE.md §15` 의 diff 대조가 무의미해진다.
+    """
+    if not argument or argument in (".", "-"):
+        return None
+    segments = argument.replace("\\", "/").split("/")
+    if any(segment == ".." for segment in segments):
+        return None
+    return relative_parts(argument, root)
