@@ -40,6 +40,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_stop_gate.py\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

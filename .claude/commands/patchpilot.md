@@ -1,7 +1,7 @@
 ---
 description: BUG 태스크 하나를 Planner → Developer → Tester → Reviewer 순서로 처리하는 PatchPilot Orchestrator를 실행한다
 argument-hint: <task 파일 경로> (예 tasks/BUG-001.md)
-allowed-tools: Read, Write, Glob, Grep, Task, Agent, Bash(date:*), Bash(mkdir:*), Bash(git status:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(git log:*)
+allowed-tools: Read, Write, Glob, Grep, Task, Agent, Bash(date:*), Bash(mkdir:*), Bash(printenv:*), Bash(git status:*), Bash(git rev-parse:*), Bash(git diff:*), Bash(git log:*)
 ---
 
 # PatchPilot Orchestrator
@@ -48,7 +48,14 @@ allowed-tools: Read, Write, Glob, Grep, Task, Agent, Bash(date:*), Bash(mkdir:*)
 date +"%Y%m%d-%H%M"
 git rev-parse HEAD
 git status --porcelain
+printenv CLAUDE_CODE_SESSION_ID
 ```
+
+`printenv` 는 이 변수 하나만 출력한다. 환경변수 전체를 덤프하지 않는다.
+출력된 값은 Stop Gate(`guard_stop_gate.py`)가 이번 실행을 세션에 귀속시키는 유일한 기준이며,
+Stop payload 의 `session_id` 와 문자열 완전 일치로 비교된다.
+값을 얻지 못하면 `session_id` 를 `null` 로 기록하고 **실행은 그대로 계속한다.**
+그 경우 Stop Gate 가 이번 실행을 검사하지 않을 뿐이며, 다른 단계에는 영향이 없다.
 
 Run ID 형식:
 
@@ -76,6 +83,7 @@ mkdir -p reports/<run-id>
 {
   "run_id": "RUN-20260819-1400-BUG-001",
   "task": "tasks/BUG-001.md",
+  "session_id": "<printenv CLAUDE_CODE_SESSION_ID 결과 또는 null>",
   "status": "RUNNING",
   "current_stage": "PLANNING",
   "retry_count": 0,
@@ -91,6 +99,11 @@ mkdir -p reports/<run-id>
   "blocked_reason": null
 }
 ```
+
+`session_id` 는 **이 시점에 한 번만 기록하고 이후 어느 단계에서도 덮어쓰지 않는다.**
+Orchestrator(메인 세션)만 기록한다. 서브에이전트는 자기 세션 식별자를 갖고 있으므로
+(`CLAUDE_CODE_CHILD_SESSION`) planner / developer / tester / reviewer 에게 이 값을 쓰게 하면
+Stop Gate 의 run 귀속이 깨진다. `§0-5` 대로 `state.json` 은 Orchestrator만 쓴다.
 
 `start_dirty_files` 는 실행 시작 시점에 이미 변경되어 있던 파일이다.
 최종 `git diff` 에서 **이번 실행이 만든 변경** 을 구분하기 위한 기준이므로 반드시 기록한다.
@@ -435,8 +448,27 @@ REVIEWER_INVALID_VERDICT
 REVIEW_CHANGES_REQUESTED_NO_BUDGET
 ```
 
+마감 시 `session_id` 는 그대로 둔다. `§1-5` 에서 기록한 값을 덮어쓰거나 지우지 않는다.
+
 **어떤 경로로 종료하든 `state.json` 과 `report.md` 는 반드시 남긴다.**
 중간에 `BLOCKED` 로 끊기더라도 그 시점까지의 사실을 기록한 두 파일을 남긴 뒤 종료한다.
+
+### 10-1. 종료 직전 Stop Gate
+
+`final_status` 를 기록하면 턴 종료 시 `guard_stop_gate.py` 가 한 번 실행되어
+`state.json` 의 선언과 `reports/<run-id>/` 산출물을 대조한다. 직접적인 모순이 확인되면
+종료가 한 번 차단되고 위반 목록이 전달된다. 그때는 다음을 지킨다.
+
+* 사실과 다른 값을 맞추려고 `state.json` 이나 `report.md` 를 고치지 않는다.
+* 누락된 단계가 있으면 그 단계를 수행한다.
+* 교정이 불가능하면 `§8` 규칙으로 최종 상태를 다시 판정한다.
+* 사용자 보고(`§11`)에 Stop Gate 가 발견한 불일치를 반드시 포함한다.
+
+차단은 한 user prompt 안에서 한 번만 일어난다. 이어지는 턴의 종료는 재진입 호출
+(`stop_hook_active`)에서 재검사 없이 통과하므로, 가능한 교정은 그 턴에서 끝내야 한다.
+
+Claude Code 는 정책적 차단도 `"Stop hook error occurred"` 로 표시한다. 훅 실행 오류가
+아니라 게이트가 정상 동작한 것이다.
 
 ---
 
