@@ -1,4 +1,18 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(uv add:*)",
+      "Bash(uv remove:*)",
+      "Bash(pip install:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(rm:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -12,6 +26,16 @@
           {
             "type": "command",
             "command": "uv run python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_plan_scope.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_bash_scope.py\"",
             "timeout": 10
           }
         ]
