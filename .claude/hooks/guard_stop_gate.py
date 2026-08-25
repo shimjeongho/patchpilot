@@ -430,6 +430,44 @@ def _check_blocked(state: dict, artifacts: RunArtifacts) -> list:
     return violations
 
 
+# 판정 결과 한 벌. `notes` 는 위반이 아니라 "판정하지 못하고 건너뛴 검사" 다.
+# 둘을 한 값으로 묶어야 호출자가 "위반 없음" 과 "검사하지 못함" 을 구분할 수 있다.
+CheckResult = namedtuple("CheckResult", "violations notes")
+
+
+def check_run(state: dict, run_dir: Path) -> CheckResult:
+    """종료 선언(`state`)을 `run_dir` 의 산출물과 대조한다. (G1~G19)
+
+    Stop Gate 판정의 **공개 진입점**이다. 규칙은 하나도 갖고 있지 않고
+    `_check_common` / `_check_success` / `_check_blocked` 를 그대로 호출해 결과만
+    합치는 얇은 합류 지점이다.
+
+    이 함수가 있는 이유는 `evals/harness_audit.py` 가 보존된 대표 결과를 검사할 때
+    G1~G19 를 다시 구현하지 않게 하기 위해서다. 같은 규칙의 판정 코드가 두 벌이
+    되면 그 순간부터 둘은 갈라진다. `_guard_common.plan_allowed_files()` 와
+    `evals/tests/test_plan_parser_agreement.py` 가 이미 같은 이유로 존재한다.
+
+    돌려주는 `notes` 에는 이미 `[HOOK_ID]` 접두사가 붙어 있어 호출자가 그대로 쓸 수
+    있다. 위반이 아니므로 차단 근거로 쓰면 안 된다.
+
+    전제: `state["final_status"]` 가 `FINAL_STATUSES` 중 하나여야 한다. 호출자가
+    보장한다. `decide()` 는 `patchpilot.md §10` 계약 밖의 값을 만나면 이 함수를
+    부르기 전에 검사를 건너뛰고, Audit 은 같은 값을 별도 check 로 판정한다.
+
+    파일을 쓰지 않고 stdout / stderr 로 출력하지 않으며 시각·난수·네트워크에
+    의존하지 않는다. 같은 입력이면 항상 같은 결과다.
+    """
+    notes: list = []
+    artifacts = RunArtifacts(run_dir)
+    violations = _check_common(state, artifacts, notes)
+    if state.get("final_status") == FINAL_SUCCESS:
+        violations.extend(_check_success(state, artifacts))
+    else:
+        violations.extend(_check_blocked(state, artifacts))
+    notes.extend("[{0}] {1}".format(HOOK_ID, item) for item in artifacts.skipped)
+    return CheckResult(violations, notes)
+
+
 NEXT_ACTIONS = (
     "위 불변식과 관련된 산출물만 확인한다.",
     "사실과 다른 state.json / report.md 값을 임의로 맞추지 않는다.",
@@ -531,14 +569,9 @@ def decide(payload: dict, root: Path) -> tuple:
         )
         return DECISION_ALLOW, None, notes
 
-    artifacts = RunArtifacts(run_dir)
-    violations = _check_common(state, artifacts, notes)
-    if final_status == FINAL_SUCCESS:
-        violations.extend(_check_success(state, artifacts))
-    else:
-        violations.extend(_check_blocked(state, artifacts))
-
-    notes.extend("[{0}] {1}".format(HOOK_ID, item) for item in artifacts.skipped)
+    # 판정은 `check_run()` 하나로 모은다. Stop Gate 와 Audit 이 같은 경로를 쓴다.
+    violations, check_notes = check_run(state, run_dir)
+    notes.extend(check_notes)
 
     if not violations:
         return DECISION_ALLOW, None, notes

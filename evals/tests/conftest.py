@@ -80,6 +80,11 @@ def eval_harness():
     return _load("patchpilot_eval_harness", ROOT / "evals" / "eval_harness.py")
 
 
+@pytest.fixture(scope="session")
+def harness_audit():
+    return _load("patchpilot_harness_audit", ROOT / "evals" / "harness_audit.py")
+
+
 @pytest.fixture(autouse=True)
 def clean_disable_switch(monkeypatch):
     """비활성 스위치가 다른 테스트로 새지 않게 매 테스트마다 지운다."""
