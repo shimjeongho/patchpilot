@@ -71,6 +71,11 @@ def guard_bash_scope(guard_common):
 
 
 @pytest.fixture(scope="session")
+def guard_stop_gate(guard_common):
+    return _load("guard_stop_gate", HOOKS_DIR / "guard_stop_gate.py")
+
+
+@pytest.fixture(scope="session")
 def eval_harness():
     return _load("patchpilot_eval_harness", ROOT / "evals" / "eval_harness.py")
 

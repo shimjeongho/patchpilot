@@ -352,3 +352,90 @@ def repo_relative_arg(argument: str, root: Path) -> tuple[str, ...] | None:
     if any(segment == ".." for segment in segments):
         return None
     return relative_parts(argument, root)
+
+
+# ---------------------------------------------------------------------------
+# Stop Hook 전용 재료
+#
+# Stop 은 PreToolUse 와 판정 전달 방식이 다르다. 종료 코드가 아니라 stdout 의
+# JSON 으로 결정을 알린다(`{"decision": "block", "reason": ...}` + exit 0).
+# 그래서 아래 헬퍼는 위쪽의 ALLOW / BLOCK 종료 코드와 무관하다.
+# ---------------------------------------------------------------------------
+
+
+def write_stdout_json(document: dict) -> None:
+    """stdout 으로 JSON 한 건을 UTF-8 바이트로 쓴다.
+
+    `write_stderr()` 와 같은 이유로 인코딩을 UTF-8 로 고정한다. Windows 에서
+    `sys.stdout` 의 기본 인코딩은 콘솔 코드페이지(예: cp949)라서 한국어 reason 을
+    그대로 실을 수 없다.
+
+    stdout 에는 이 JSON 외에 아무것도 쓰지 않는다. 한 글자라도 섞이면 Claude Code
+    가 판정을 읽지 못하고, 차단이 조용히 무시된다.
+    """
+    body = json.dumps(document, ensure_ascii=False)
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        # 테스트 등에서 stdout 이 텍스트 전용 객체로 바뀐 경우.
+        sys.stdout.write(body)
+        sys.stdout.flush()
+        return
+    buffer.write(body.encode("utf-8"))
+    buffer.flush()
+
+
+def first_line(text: str) -> str:
+    """첫 번째 비어 있지 않은 줄을 앞뒤 공백 없이 돌려준다. 없으면 빈 문자열.
+
+    `evals/eval_harness.py` 의 `first_line()` 과 같은 규칙이며, Orchestrator 가
+    `patchpilot.md §4-1` / `§7-1` 에서 첫 줄을 기계 판정하는 방식과 맞춘 것이다.
+    해석하지 않고 완전 일치로만 비교하기 위한 정규화다.
+    """
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def find_run_by_session(root: Path, session_id: str) -> tuple[list, list]:
+    """(귀속된 (run 디렉터리, state) 목록, 읽지 못한 run 이름 목록) 을 돌려준다.
+
+    `reports/RUN-*/state.json` 의 `session_id` 가 인자와 문자열 완전 일치하는
+    run 만 모은다. `session_id` 키가 없는 기존 run 은 자동으로 제외되고, 보존된
+    대표 결과는 `reports/examples/EVAL-*` 아래에 있어 glob 에 걸리지 않으므로
+    구조적으로 검사 대상이 될 수 없다.
+
+    `find_active_run()` 과 찾는 대상이 다르다. 그쪽은 진행 중인 run(`status` 가
+    `RUNNING`)을, 이쪽은 이미 끝난 run 을 세션 식별자로 귀속한다. mtime 이나
+    "가장 최근" 같은 순서 개념을 쓰지 않는다. 디렉터리 나열 순서가 판정에 섞이지
+    않도록 정렬해서 순회하며, 같은 입력이면 항상 같은 결과다.
+
+    state.json 을 읽지 못한 run 은 일치 여부를 판단할 수 없으므로 후보에서 빼고
+    이름만 돌려준다. 호출자는 그 사실을 반드시 드러내야 한다.
+    """
+    matched: list = []
+    unreadable: list = []
+    if not isinstance(session_id, str) or not session_id:
+        return matched, unreadable
+
+    reports = root / "reports"
+    if not reports.is_dir():
+        return matched, unreadable
+
+    for run_dir in sorted(reports.glob("RUN-*")):
+        if not run_dir.is_dir():
+            continue
+        state_file = run_dir / "state.json"
+        if not state_file.is_file():
+            continue
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            unreadable.append(run_dir.name)
+            continue
+        if not isinstance(state, dict):
+            unreadable.append(run_dir.name)
+            continue
+        if state.get("session_id") == session_id:
+            matched.append((run_dir, state))
+    return matched, unreadable
