@@ -303,8 +303,8 @@ CLAUDE.md §22 완료 항목이 지목하는 파일 실재
 
 - 계약: CLAUDE.md §22
 - 근거:
-  - §22 완료 항목 6개
-  - 확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, sample-project, sample-project/tests
+  - §22 완료 항목 9개
+  - 확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, dashboard, evals, sample-project, sample-project/tests
 
 #### F2 - PASS (3/3)
 

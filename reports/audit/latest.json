@@ -444,8 +444,8 @@
           "critical": false,
           "contract": "CLAUDE.md §22",
           "evidence": [
-            "§22 완료 항목 6개",
-            "확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, sample-project, sample-project/tests"
+            "§22 완료 항목 9개",
+            "확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, dashboard, evals, sample-project, sample-project/tests"
           ],
           "remediation": "§22 의 `[x]` 항목이 가리키는 파일을 실제로 두거나, 구현되지 않았다면 `[ ]` 로 되돌린다."
         },

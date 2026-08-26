@@ -6,6 +6,13 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 
 이 저장소의 결과물은 "Claude Code로 개발한 애플리케이션"이 아니라 **"Claude Code Agent가 안정적으로 개발 작업을 수행하도록 만든 통제 구조"** 그 자체입니다. Agent가 무엇을 할 수 있고, 무엇을 판정할 권한이 있으며, 실패했을 때 어디로 가는지를 규칙·도구 권한·파일 소유권으로 정의했습니다.
 
+서로 다른 두 층으로 검증합니다. 두 수치는 검사 대상이 다르므로 합산하지 않습니다.
+
+| 검증 층 | 무엇을 보는가 | 현재 결과 |
+| --- | --- | --- |
+| **Harness Audit** (구조 검증) | 저장소가 선언한 통제 계약이 실제로 갖춰져 있고 서로 모순되지 않는가 | `PASS` · 94 / 100 · Critical 0 |
+| **Harness Eval** (실행 검증) | 결함을 주입했을 때 Harness가 실제로 어떤 상태 전이를 거치는가 | 4 시나리오 · 147 / 147 항목 |
+
 **🔗 Dashboard Live Demo — https://patchpilot-five.vercel.app**
 
 실제 Harness 실행 결과(Fault Injection Eval 4종)의 상태 전이와 Agent 산출물을 브라우저에서 바로 확인할 수 있습니다.
@@ -550,9 +557,99 @@ uv run python evals/eval_harness.py selftest   # EVAL: PASS (40/40)
 
 ---
 
+## 🔍 Harness Audit — 구조 계약 검증
+
+Eval은 Harness가 **실행됐을 때** 어떻게 행동하는지 검증합니다. 그런데 그 앞에 남는 질문이 하나 있습니다. **저장소가 지금 이 상태로, 선언한 통제 계약을 실제로 갖추고 있는가?**
+
+Guard를 만들어 두고 `settings.json`에 등록하지 않으면 그 Guard는 오류 없이 조용히 무시됩니다. README의 권한 표와 Agent frontmatter가 갈라져도 아무것도 실패하지 않습니다. 이런 결함은 실행해 봐야 드러나지 않고, 실행해도 안 드러날 수 있습니다.
+
+`evals/harness_audit.py`는 저장소 파일만 읽어 이 계약들을 결정론적으로 채점합니다. LLM 판단·네트워크·시각·난수를 쓰지 않으므로 같은 저장소 상태면 항상 같은 결과입니다.
+
+| 층 | 검사 대상 | 담당 |
+| --- | --- | --- |
+| `PreToolUse` / `Stop` Hook | Agent의 **실시간 행위** | `.claude/hooks/` |
+| Harness Eval | Harness의 **실행 결과 상태 전이** | `evals/eval_harness.py` |
+| Harness Audit | 저장소의 **정지 상태 구조 계약** | `evals/harness_audit.py` |
+
+> **Audit이 PASS라는 것은 Harness가 실제로 동작한다는 증명이 아닙니다.** 계약이 정합적이라는 증거이고, 실제 동작 검증은 Eval의 담당입니다. Audit은 `pytest`도 `selftest`도 실행하지 않습니다.
+
+### 채점 결과 — 현재 94 / 100
+
+7개 Category · 33개 check · 100점이며, 모든 check는 **이진 판정**입니다. PASS면 만점, FAIL이면 0점이고 부분 점수가 없습니다. 부분 점수를 허용하는 순간 "기계적으로 증명 가능한 사실 하나"라는 기준이 무너지기 때문입니다.
+
+| Category | 점수 | 검사하는 것 |
+| --- | --- | --- |
+| A. Agent Role Isolation | 13 / 13 | Agent 정의와 최소 권한 행렬의 일치 |
+| B. Guard Registration & Enforcement | 20 / 20 | Guard 파일과 `settings.json` 등록의 양방향 일치 |
+| C. Control Contract Consistency | 19 / 19 | 분류·사유 코드·고정 명령·예산이 여러 소스에서 동일한가 |
+| D. Artifact & Evidence Contract | 13 / 13 | 보존된 대표 결과의 스키마와 Stop Gate 불변식 replay |
+| E. Eval Coverage & Replay | **15 / 17** | 시나리오·fixture·결함 모듈·종료 경로 커버리지 |
+| F. Documentation Consistency | 10 / 10 | 문서의 주장이 구현과 일치하는가 |
+| G. Reproducibility & Automation | **4 / 8** | CI · 환경 고정 · Audit 자기 무결성 |
+
+감점 두 건은 숨기지 않았습니다.
+
+- **E4b (-2)** — 종료 경로 7개 중 4개만 결정론적 Eval로 검증되어 있습니다. `TEST_DEFECT` · `UNKNOWN` 2회 · Reviewer `CHANGES_REQUESTED` 경로가 남았습니다.
+- **G1 (-4)** — 세 검증기를 모두 실행하는 CI 워크플로가 아직 없습니다.
+
+자기 저장소를 채점하는 도구가 자기에게 만점을 주면 그 점수는 아무 의미가 없습니다. 두 감점이 그대로 남아 있는 것이 이 Audit이 장식이 아니라는 증거입니다. 단위 테스트가 33개 check 전부에 **FAIL을 만들어내는 반증 사례**를 요구하는 것도 같은 이유입니다.
+
+### Critical Hard Gate — 점수와 별개인 판정
+
+`verdict`는 점수가 아니라 **Critical 실패의 존재 여부만으로** 결정됩니다. 기준선은 하나입니다.
+
+> **거짓말이면 Critical, 미완성이면 감점.**
+
+종료 경로 Eval이 7개 중 4개뿐인 것은 미완성이므로 감점입니다. 반면 다음은 문서가 사실과 다른 말을 하는 경우이므로, 점수가 아무리 높아도 `verdict`는 `FAIL`이 됩니다.
+
+- `GUARD_NOT_ENFORCED` — Guard 파일은 있는데 `settings.json`에 등록되지 않음 (등록되지 않은 Guard는 전혀 동작하지 않습니다)
+- `STOP_GATE_SHAPE_INVALID` — `Stop` 훅이 평면형으로 등록됨 (오류 없이 무시되는 무증상 실패 모드입니다)
+- `EVIDENCE_INVALID` — 보존된 대표 결과가 자기 Stop Gate 불변식을 위반함
+
+현재 Critical은 **0건**이라 `verdict`는 `PASS`입니다.
+
+### 실행
+
+```bash
+uv run python evals/harness_audit.py                    # text 요약
+uv run python evals/harness_audit.py --format json      # CI / Dashboard 소비용
+uv run python evals/harness_audit.py --write            # 대표 결과 갱신
+/patchpilot-audit                                       # Claude Code 커맨드 (재채점하지 않는 wrapper)
+```
+
+종료 코드는 `0` PASS / `1` FAIL / `2` **Audit 자체를 수행하지 못함**으로 나뉩니다. `1`과 `2`를 섞으면 CI가 감사 도구의 고장을 감사 결과 불합격으로 오독합니다.
+
+점수는 같은 `rubric_version` 안에서만 비교할 수 있습니다. 배점과 Critical 목록은 `rubric_digest`(sha256)로 고정되어 있어, 버전을 올리지 않고 rubric을 고치면 Audit이 자기 자신을 FAIL시킵니다. 대표 결과는 `latest.json` · `latest.md` 두 파일만 보존하고 날짜별 파일을 쌓지 않습니다. 이력은 git이 이미 가지고 있기 때문입니다.
+
+세부 계약은 [`CLAUDE.md` §26](CLAUDE.md), 전체 33개 check의 판정 근거는 [`reports/audit/latest.md`](reports/audit/latest.md)에 있습니다.
+
+### 참고한 선행 사례
+
+Harness 자체를 채점한다는 발상은 Claude Code Hackathon에서 출발한 오픈소스 프로젝트 **ECC**(Everything Claude Code, [affaan-m/ECC](https://github.com/affaan-m/ECC))를 reference로 분석하면서 정리했습니다. 코드를 가져오지 않았고, 설계 층위에서 참고한 것은 다음입니다.
+
+- Harness scorecard라는 발상 자체
+- rubric에 버전을 붙이는 방식
+- JSON / text 이중 출력과 CI-safe한 결정론 감사
+- `Stop` lifecycle hook의 위치와 `decision: block` 패턴
+
+PatchPilot에서 독자적으로 설계한 부분은 다음입니다.
+
+- 같은 값을 여러 소스에서 대조하는 **cross-source contract consistency** (분류 5종 · BLOCKED 사유 코드 · 고정 테스트 명령 · retry budget)
+- 점수와 분리된 **Critical Hard Gate**
+- `agent_type` 기반의 role별 Guard enforcement
+- Stop Gate 불변식 19개와 그 replay를 Audit의 D3가 다시 호출하는 구조
+- retry budget과 Eval 종료 경로를 Audit 커버리지 판정에 결합
+- 배점·Critical 여부를 sha256으로 고정하는 `rubric_digest`
+- 33개 이진 check와 "모든 check는 반증 사례를 가진다"는 테스트 규율
+- Dashboard에서 Audit과 Eval을 의미가 다른 두 영역으로 분리 표시
+
+---
+
 ## 📊 Dashboard
 
-`reports/examples/`에 보존된 대표 결과를 읽어 Harness의 상태 전이를 보여주는 정적 대시보드입니다. Next.js App Router의 Server Component에서 Markdown/JSON을 **빌드 타임에 직접 읽고** 정적 HTML로 내보냅니다. 서버도 DB도 API도 없습니다.
+보존된 대표 결과를 읽어 Harness의 검증 결과를 보여주는 정적 대시보드입니다. Next.js App Router의 Server Component에서 Markdown/JSON을 **빌드 타임에 직접 읽고** 정적 HTML로 내보냅니다. 서버도 DB도 API도 없습니다.
+
+데이터 소스는 둘이며 서로 섞지 않습니다. `reports/examples/` 의 Eval 대표 결과는 **필수**이고, `reports/audit/latest.json` 의 Audit 대표 결과는 **선택**입니다. Audit JSON이 없어도 빌드는 성공하고 Overview에 안내 문구만 표시됩니다. 다만 파일이 **있는데 손상된 경우**에는 빌드를 실패시킵니다. 손상된 증거를 "없음"으로 갈음하면 증거 문제를 화면에서 은폐하게 되기 때문입니다.
 
 배포된 대시보드는 여기서 바로 볼 수 있습니다. **[Dashboard Live Demo](https://patchpilot-five.vercel.app)**
 
@@ -569,7 +666,7 @@ npm run build    # out/ 에 정적 HTML 생성
 
 | 화면 | 내용 |
 | --- | --- |
-| Overview | Total / SUCCESS / BLOCKED / 총 Attempts / 총 Retry + Eval 목록 |
+| Overview | **구조 검증 · Harness Audit** (verdict · 점수 · Critical · Category 7개 · 미달 check · Next Actions) 과 **실행 검증 · Harness Eval** (Total / SUCCESS / BLOCKED / 총 Attempts / 총 Retry + Eval 목록) 두 영역 |
 | Eval Detail | 상태 전이 Timeline · Agent 실행 여부 · Attempt별 STATUS와 retry_count 변화 · 자동 검증 항목 |
 | Artifact Viewer | `plan-N.md` · `change-log-N.md` · `test-result-N.md` · `fault-injection-N.md` · `review.md` · `report.md` · `state.json` · `eval-result.md` |
 
@@ -577,7 +674,9 @@ Timeline이 핵심입니다. `state.json`만으로는 전이를 그릴 수 없�
 
 호출되지 않은 Agent는 빈칸으로 두지 않습니다. EVAL-003의 Reviewer 미호출은 Harness가 멈춘 것이 아니라 `ENVIRONMENT_ERROR` 라우팅 규칙대로 부르지 않은 것이고, `eval-result.md`가 그 부재를 자동 검증 항목으로 판정해 두었습니다. 대시보드는 그 판정을 읽어 **"미호출 (자동 검증됨)"**으로 표시합니다.
 
-`dashboard/`는 Harness 영역도 수정 대상 영역도 아닌 **읽기 전용 소비자**입니다. `reports/examples/`를 읽기만 하고, `evals/eval_harness.py`를 import하지 않으며(같은 파일 계약을 독립 구현), Python 의존성을 추가하지 않습니다. 자세한 내용은 [`dashboard/README.md`](dashboard/README.md)에 있습니다.
+Overview 상단의 두 영역은 **의도적으로 분리**되어 있습니다. Audit의 94/100과 Eval의 147/147은 검사 대상이 다르므로 합산하지 않고, 하나를 다른 하나의 근거로 쓰지도 않습니다.
+
+`dashboard/`는 Harness 영역도 수정 대상 영역도 아닌 **읽기 전용 소비자**입니다. `reports/examples/` 와 `reports/audit/latest.json` 을 읽기만 하고, `evals/eval_harness.py` 나 `evals/harness_audit.py` 를 import하지 않으며(같은 파일 계약을 독립 구현), Python 의존성을 추가하지 않습니다. 자세한 내용은 [`dashboard/README.md`](dashboard/README.md)에 있습니다.
 
 ---
 
@@ -589,8 +688,10 @@ patchpilot/
 │
 ├── .claude/
 │   ├── agents/                   planner · developer · tester · reviewer
+│   ├── hooks/                    PreToolUse Guard 3종 + Stop Gate
 │   └── commands/
-│       └── patchpilot.md         Orchestrator 실행 절차
+│       ├── patchpilot.md         Orchestrator 실행 절차
+│       └── patchpilot-audit.md   Harness Audit 실행 wrapper
 │
 ├── sample-project/               수정 대상 제품 코드
 │   ├── src/expense/              splitter · weighted_splitter · allocation
@@ -601,17 +702,20 @@ patchpilot/
 ├── tasks/                        BUG-001 ~ BUG-004 요구사항
 │
 ├── evals/                        Harness 자체 검증
-│   ├── eval_harness.py           setup / inject / assert / finish / teardown / promote / selftest
+│   ├── eval_harness.py           실행 검증 — setup / inject / assert / finish / teardown / promote / selftest
+│   ├── harness_audit.py          구조 검증 — 7 Category · 33 check · 100점
+│   ├── tests/                    Hook · Audit 판정 로직 단위 검증
 │   ├── fixtures/                 Eval 전용 Task 4종 + 제품 모듈·테스트
 │   └── faults/                   결함 정의 6종
 │
 ├── reports/                      실행 산출물 (gitignore)
-│   └── examples/                 검증 통과한 대표 실행 결과 (커밋됨)
+│   ├── examples/                 검증 통과한 대표 실행 결과 (커밋됨)
+│   └── audit/                    latest.json · latest.md — 대표 Audit 결과 (커밋됨)
 │
-├── dashboard/                    Eval 결과 대시보드 (읽기 전용 소비자)
+├── dashboard/                    검증 결과 대시보드 (읽기 전용 소비자)
 │   ├── app/                      Overview · Eval Detail · Artifact Viewer
 │   ├── components/               Ui · Timeline · Markdown
-│   └── lib/                      types · parse · evals · timeline
+│   └── lib/                      types · parse · evals · timeline · audit
 │
 ├── pyproject.toml
 ├── uv.lock
@@ -629,7 +733,9 @@ patchpilot/
 | AI Coding Agent | Claude Code |
 | Agent 구성 | Claude Code Subagents |
 | Harness 규칙 | `CLAUDE.md` |
-| 실행 절차 | Custom Commands (`/patchpilot`) |
+| 실행 절차 | Custom Commands (`/patchpilot`, `/patchpilot-audit`) |
+| 실행 통제 | Claude Code Hooks (`PreToolUse` 3종, `Stop` 1종) |
+| Harness 검증 | Fault Injection Eval (실행) · Harness Audit (구조) |
 | Language | Python 3.12 |
 | Testing | pytest |
 | 환경·의존성 관리 | uv (`pyproject.toml`, `uv.lock`) |
@@ -640,13 +746,15 @@ patchpilot/
 
 ## 🔮 Future Work
 
-아직 구현하지 않은 항목입니다.
+아직 구현하지 않은 항목입니다. 앞의 두 항목은 현재 Harness Audit이 실제로 감점하고 있는 지점과 같습니다.
 
-**Eval 확장** — 현재 `PRODUCT_CODE_DEFECT` · `PLAN_DEFECT` · `ENVIRONMENT_ERROR` · `RETRY_BUDGET_EXCEEDED` 네 경로가 결정론적으로 검증되어 있습니다. 남은 경로는 다음과 같습니다.
+**Eval 확장 — Audit check E4b (-2점)** — 현재 `PRODUCT_CODE_DEFECT` · `PLAN_DEFECT` · `ENVIRONMENT_ERROR` · `RETRY_BUDGET_EXCEEDED` 네 경로가 결정론적으로 검증되어 있습니다. 남은 경로는 다음과 같습니다.
 
 - `TEST_DEFECT` Eval — 테스트를 자동 수정하지 않고 즉시 `BLOCKED` 처리되는지
 - `UNKNOWN` Eval — 1회만 추가 시도하고 두 번째 `UNKNOWN`에서 종료되는지
 - Reviewer `CHANGES_REQUESTED` Eval — 테스트가 PASS인 상태에서 리뷰 지적으로 재수정 루프가 도는지
+
+**CI — Audit check G1 (-4점)** — 단위 테스트(`evals/tests`) · `eval_harness.py selftest` · `harness_audit.py` 세 검증기를 모두 실행하는 GitHub Actions 워크플로. 세 검증기는 담당이 겹치지 않습니다. 각각 Hook 판정 로직의 단위 검증, 판정 코드의 replay 회귀, 구조 계약의 정합성을 봅니다.
 
 **Eval 격리** — HARNESS-EVAL-003에서 드러난 한계입니다.
 
@@ -656,6 +764,7 @@ patchpilot/
 
 - `reports/<run-id>/` 쓰기 주체 강제 — 현재 "state.json과 report.md는 Orchestrator만 쓴다"는 규칙으로만 강제되고 도구 수준 차단은 없습니다
 - Docker 기반 Sandbox 실행 환경
+- Audit rubric의 다음 버전 — 현재 33개 check는 전부 파일 존재·상수 일치·표 대조처럼 기계적으로 증명 가능한 사실만 봅니다. 산문 계약을 검사 대상으로 넓히려면 `rubric_version`을 올려야 하고, 그 시점부터 이전 점수와 직접 비교할 수 없습니다
 
 **측정 및 연동**
 
@@ -670,6 +779,8 @@ patchpilot/
 
 PatchPilot에서 중요하게 다룬 것은 AI가 코드를 얼마나 많이 생성하는가가 아니라, **AI의 작업을 어떻게 통제하고 검증할 것인가**입니다.
 
+"Claude Code를 사용한 프로젝트"가 아니라 **Agent의 역할·권한·상태 전이·재시도·종료 판정, 그리고 Harness 자체의 구조 계약까지 기계적으로 검증하는 Agent Harness**를 만드는 것이 목표였습니다.
+
 | 주제 | 이 저장소에서의 구현 |
 | --- | --- |
 | **Agent 역할 분리** | 계획·구현·검증·리뷰를 4개 Agent로 분리, 판정 권한을 각각 독점 |
@@ -682,7 +793,13 @@ PatchPilot에서 중요하게 다룬 것은 AI가 코드를 얼마나 많이 생
 | **Retry Budget** | 실행 전체에서 3회 공유. 예산을 다 쓰면 성공으로 위장하지 않고 `BLOCKED` — 실제 실행으로 검증 |
 | **Fault Injection** | Agent의 실수를 기다리지 않고 결함을 주입해 실패 경로를 강제 실행. 재주입 전 이전 결함 제거 여부를 확인 |
 | **결정론적 Eval** | 4개 종료 경로를 결함 주입으로 강제 실행. 시나리오별 27~55개 항목 자동 판정 |
+| **구조 계약 감사** | 저장소가 선언한 통제 계약을 33개 이진 check로 채점. 점수와 별개로 Critical Hard Gate가 verdict를 결정 |
+| **감사 도구의 반증 가능성** | 33개 check 전부가 FAIL을 만들어내는 테스트를 가짐. 현재 자기 저장소 점수도 만점이 아닌 94/100 |
 | **자동 복구 검증** | teardown 후 `sample-project/`가 실행 전과 완전히 동일한지 확인 |
 | **재현 가능한 환경** | uv + `uv.lock`으로 의존성 버전 고정 |
 
 가장 오래 고민한 부분은 **"검증되지 않은 경로를 어떻게 검증할 것인가"**였습니다. 재시도 루프를 설계해 두었지만 Agent가 실패하지 않아 한 번도 실행되지 않는 상황에서, 더 어려운 버그를 만드는 대신 결함을 주입하는 방향으로 전환한 것이 이 프로젝트의 핵심 결정이었습니다.
+
+그 다음 질문이 **"통제 장치가 있다는 선언 자체는 누가 검증하는가"**였습니다. Guard를 만들어 두고 등록하지 않아도, 문서와 구현이 갈라져도 아무것도 실패하지 않습니다. Harness Audit은 그 선언을 저장소 파일만으로 채점해서, 통제 구조에 대한 주장이 검증 가능한 사실이 되게 만듭니다.
+
+다만 이 Harness가 보장하는 것은 **절차와 증거이지 결과의 정확성이 아닙니다.** Agent가 잘못된 수정을 하는 것을 막지 못하고, 모든 오류를 방지하지도 않습니다. 하는 일은 잘못된 수정이 검증되지 않은 채 "성공"으로 기록되기 어렵게 만들고, 무엇이 어디서 어긋났는지 파일로 남기는 것입니다.

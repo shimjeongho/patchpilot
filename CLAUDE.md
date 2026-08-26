@@ -585,7 +585,12 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 * [x] `Stop` Hook — 종료 선언과 산출물의 모순 대조 (`guard_stop_gate.py`, §25)
 * [x] `/patchpilot` 커맨드 — Orchestrator 실행 절차의 고정
 * [x] `sample-project/` 및 `tasks/BUG-XXX.md` 구성
+* [x] Harness Audit — 저장소 정지 상태 구조 계약의 결정론적 채점 (`evals/`, §26)
+* [x] `/patchpilot-audit` 커맨드 — Audit 실행 wrapper (재채점하지 않음, §26)
+* [x] Dashboard 구조 검증 표시 — Audit 결과와 Eval 결과를 분리해 시각화 (`dashboard/`)
 * [ ] `PreToolUse` Hook — `reports/<run-id>/` 쓰기 주체 제한 (state.json / report.md는 Orchestrator만)
+* [ ] CI 워크플로 — 단위 테스트 / selftest / audit 세 검증기를 모두 실행 (Audit check G1)
+* [ ] 종료 경로 7개 전부에 대한 결정론적 Eval (Audit check E4b)
 
 Hook이 담당하지 않는 제약은 도구 권한(`tools:`)과 각 Agent의 금지 사항으로 통제합니다.
 Hook 판정 로직은 `evals/tests/` 에서 단위 검증되며, 판정을 건너뛰어야 할 때는
@@ -750,3 +755,130 @@ Hook 실행 오류와 같은 문구이므로, 이 메시지만으로 Hook 고장
 ```bash
 PATCHPILOT_DISABLED_HOOKS=guard-stop-gate
 ```
+
+---
+
+## 26. Harness Audit
+
+`evals/harness_audit.py` 는 저장소가 선언한 통제 계약이 **실제로 갖춰져 있고 서로 모순되지 않는지** 결정론적으로 채점합니다.
+
+### 검사 대상 — 정지 상태 구조 계약
+
+Audit은 Agent의 실시간 행위를 검사하지 않습니다. 저장소 파일만 읽어 채점하며, `uv run pytest` 도 `eval_harness.py selftest` 도 실행하지 않습니다.
+
+세 검증 층의 분업은 다음과 같습니다.
+
+| 층 | 검사 대상 | 담당 |
+| --- | --- | --- |
+| `PreToolUse` / `Stop` Hook | Agent의 **실시간 행위** | `.claude/hooks/` |
+| Harness Eval | Harness의 **실행 결과 상태 전이** | `evals/eval_harness.py` |
+| Harness Audit | 저장소의 **정지 상태 구조 계약** | `evals/harness_audit.py` |
+
+따라서 **Audit이 PASS라는 것은 Harness가 실제로 동작한다는 증명이 아닙니다.** 계약이 정합적이라는 증거이며, 실제 동작 검증은 Eval의 담당입니다. 두 결과의 수치는 검사 대상이 다르므로 합산하지 않습니다.
+
+### 채점 구조
+
+7개 Category · 33개 check · 100점입니다.
+
+| Category | 배점 | 검사하는 것 |
+| --- | --- | --- |
+| A. Agent Role Isolation | 13 | Agent 정의와 최소 권한 행렬의 일치 (§11) |
+| B. Guard Registration & Enforcement | 20 | Guard 파일과 `settings.json` 등록의 양방향 일치 (§22) |
+| C. Control Contract Consistency | 19 | 분류·사유 코드·고정 명령·예산이 여러 소스에서 동일한가 (§10, §14, §16, §19, §20) |
+| D. Artifact & Evidence Contract | 13 | 보존된 대표 결과의 스키마와 Stop Gate 불변식 replay (§12, §25) |
+| E. Eval Coverage & Replay | 17 | 시나리오·fixture·결함 모듈·종료 경로 커버리지 |
+| F. Documentation Consistency | 10 | 문서의 주장이 구현과 일치하는가 |
+| G. Reproducibility & Automation | 8 | CI · 환경 고정 · Audit 자기 무결성 |
+
+모든 check는 **이진 판정**입니다. PASS면 만점, FAIL이면 0점이며 부분 점수를 두지 않습니다. 부분 점수를 허용하는 순간 "기계적으로 증명 가능한 사실 하나"라는 기준이 무너집니다.
+
+### Critical Hard Gate
+
+기준선은 하나입니다.
+
+> **거짓말이면 Critical, 미완성이면 감점.**
+
+Guard가 등록되지 않았는데 문서가 등록됐다고 말하면 그것은 거짓말입니다. 종료 경로 eval이 7개 중 4개뿐인 것은 미완성입니다. 앞은 게이트, 뒤는 감점입니다.
+
+Critical check는 7개이며 5개 게이트 이름으로 묶입니다.
+
+| Gate | check |
+| --- | --- |
+| `ROLE_PRIVILEGE_DRIFT` | A3 |
+| `GUARD_NOT_ENFORCED` | B3 |
+| `STOP_GATE_SHAPE_INVALID` | B4 |
+| `CONTRACT_DIVERGENCE` | C1 · C2 |
+| `EVIDENCE_INVALID` | D3 · D4 |
+
+### score와 verdict는 별개
+
+`verdict` 는 **Critical 실패의 존재 여부만으로** 결정됩니다. 점수는 verdict를 바꾸지 않습니다.
+
+* Critical 0건 → `PASS` (점수가 낮아도 PASS)
+* Critical 1건 이상 → `FAIL` (점수가 높아도 FAIL)
+
+CLI의 `--min-score N` 은 호출자가 별도로 거는 임계값입니다. 미달이면 `verdict` 를 `FAIL` 로 내리고 종료 코드 1을 반환하지만, **`critical_failures` 배열은 건드리지 않습니다.** 임계값 미달을 게이트 위반으로 위장하면 위 기준선이 오염됩니다.
+
+### 버전 계약
+
+세 값은 바뀌는 이유와 소비자가 다르므로 따로 둡니다.
+
+| 값 | 현재 | 의미 | 소비자 |
+| --- | --- | --- | --- |
+| `schema_version` | 1 | JSON 봉투 구조 | Dashboard / CI 파서 |
+| `rubric_version` | 1.0.0 | 채점 계약 (check id · 배점 · Critical 여부) | 점수 비교 |
+| `audit_version` | 1.0.0 | 구현 | 재현 추적 |
+
+**점수는 같은 `rubric_version` 안에서만 비교할 수 있습니다.** 배점이나 Critical 목록이 달라진 두 점수를 나란히 놓는 것은 의미가 없습니다.
+
+`rubric_digest` 는 `sorted((check_id, max_score, is_critical))` 의 sha256입니다. 선언 순서를 바꿔도 값이 변하지 않고, 배점이나 Critical 여부를 바꾸면 변합니다. 이 값이 코드에 핀으로 박힌 값과 다르면 G3가 Audit 자기 자신을 FAIL시킵니다. rubric을 고쳤다면 `RUBRIC_VERSION` 과 `RUBRIC_DIGEST` 를 함께 갱신합니다.
+
+### 판단 불가 시의 기본값 — Guard와 정반대
+
+`_guard_common.py` 는 "판단할 수 없으면 통과시킨다"를 명시합니다. Audit은 반대입니다.
+
+|  | Guard | Audit |
+| --- | --- | --- |
+| 실행 위치 | 실시간 도구 호출 경로 | 오프라인 |
+| 오탐 비용 | 정상 실행이 죽는다 | 없다 |
+| 미탐 비용 | 위반 1회 누락 | **감사 도구 자체의 신뢰 상실** |
+
+단, 두 가지를 구분합니다.
+
+* 기대한 파일이 **없다** → 그 check만 FAIL. 근거를 evidence에 남깁니다.
+* 파일이 있는데 **읽거나 파싱할 수 없다** → `AuditError`. 검사 결과가 아니라 검사 자체를 수행하지 못한 것입니다.
+
+"검사 결과 FAIL"과 "검사를 못 했음"을 섞으면 CI가 Audit 고장을 통과로 오독합니다.
+
+### 종료 코드 계약
+
+```text
+0  Audit PASS
+1  Audit FAIL (Critical 존재, 또는 --min-score 미달)
+2  Audit 을 수행하지 못함 (AuditError / 인자 오류 / 쓰기 실패)
+```
+
+`1` 과 `2` 를 섞지 않습니다. 예상하지 못한 예외까지 `2` 로 처리하는 이유는, 예외가 그대로 새어 나가면 Python 기본 종료 코드가 `1` 이 되어 **도구 고장이 정상적인 FAIL로 보이기** 때문입니다.
+
+### 대표 결과 보존 정책
+
+```bash
+uv run python evals/harness_audit.py --write
+```
+
+이 명령만 `reports/audit/latest.json` 과 `reports/audit/latest.md` 를 갱신합니다. `--write` 없이 실행하면 파일을 하나도 만들지 않습니다.
+
+* 보존하는 것은 `latest` 두 파일**뿐**입니다. 날짜별 파일이나 `history/` · `archive/` 를 만들지 않습니다. 이력은 git이 이미 가지고 있고, 파일을 쌓으면 "어느 것이 현재인가"라는 질문이 새로 생깁니다.
+* 두 파일은 `.gitignore` 의 `reports/*` 규칙에서 예외로 추적됩니다. `reports/<run-id>/` 실행 산출물은 그대로 무시됩니다.
+* 한 파일만 쓰이고 다른 파일이 실패한 상태로 성공 처리하지 않습니다. 쓰기 실패는 종료 코드 `2` 입니다.
+
+### `/patchpilot-audit`
+
+결정론 Python Audit의 **얇은 wrapper**입니다. Claude가 점수를 다시 계산하지 않습니다.
+
+1. `evals/harness_audit.py` 를 실행하고 출력을 그대로 보고합니다.
+2. 재채점·보정·등급 부여를 하지 않습니다.
+3. FAIL한 check를 자동으로 수정하지 않습니다. `next_actions` 는 사람에게 보고할 제안이지 실행할 작업 목록이 아닙니다.
+4. Critical을 항상 먼저 표시합니다.
+5. 기본은 읽기 전용입니다. `--write` 는 사람이 명시적으로 지정할 때만 실행됩니다.
+6. 점수가 낮다고 rubric을 조정하지 않습니다.

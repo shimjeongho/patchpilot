@@ -1,9 +1,18 @@
 # PatchPilot Dashboard
 
-PatchPilot Harness의 Eval 결과를 한 화면에서 보여주는 정적 대시보드입니다.
+PatchPilot Harness의 검증 결과를 한 화면에서 보여주는 정적 대시보드입니다.
 
-`reports/examples/` 에 보존된 대표 실행 결과의 Markdown/JSON을 **빌드 타임에 직접 읽어**
-정적 HTML로 내보냅니다. 서버, DB, API, 인증이 없습니다.
+보존된 대표 결과의 Markdown/JSON을 **빌드 타임에 직접 읽어** 정적 HTML로 내보냅니다.
+서버, DB, API, 인증이 없습니다.
+
+Overview는 의미가 다른 두 영역으로 나뉩니다.
+
+| 영역 | 무엇을 보여주는가 | 데이터 소스 |
+| --- | --- | --- |
+| **구조 검증 · Harness Audit** | 저장소가 선언한 통제 계약이 실제로 갖춰져 있고 서로 모순되지 않는지 정적으로 검사한 결과 | `reports/audit/latest.json` |
+| **실행 검증 · Harness Eval** | 결함을 주입해 실제로 실행된 Harness 상태 전이를 보존된 산출물만으로 판정한 결과 | `reports/examples/` |
+
+두 수치는 검사 대상이 다르므로 **합산하지 않고**, 하나를 다른 하나의 근거로 쓰지도 않습니다.
 
 ## 실행
 
@@ -25,8 +34,8 @@ npm run typecheck
 이 디렉터리는 Harness 영역(`CLAUDE.md`, `.claude/`, `tasks/`, `evals/`)도 아니고
 수정 대상 영역(`sample-project/`)도 아닙니다. **Harness 산출물의 읽기 전용 소비자**입니다.
 
-- `reports/examples/` 를 **읽기만** 합니다. 쓰기 계열 fs 함수를 import 하지 않습니다.
-- `evals/eval_harness.py` 를 import 하거나 수정하지 않습니다. 같은 파일 계약을 독립 구현합니다.
+- `reports/examples/` 와 `reports/audit/latest.json` 을 **읽기만** 합니다. 쓰기 계열 fs 함수를 import 하지 않습니다.
+- `evals/eval_harness.py` 나 `evals/harness_audit.py` 를 import 하거나 수정하지 않습니다. 같은 파일 계약을 독립 구현합니다.
 - Python 의존성을 추가하지 않습니다. `pyproject.toml` / `uv.lock` 과 무관합니다.
 - `uv run pytest sample-project/tests -q` 의 수집 대상에 `.py` 파일이 하나도 없습니다.
 
@@ -50,16 +59,40 @@ Dashboard가 의존하는 것은 `CLAUDE.md` 가 이미 규정한 산출물 계�
 "Reviewer가 호출되지 않음"을 자동 검증 항목으로 판정해 두었으므로, 그 판정을 읽어
 "미호출 (자동 검증됨)"으로 표시합니다.
 
+### Harness Audit — 선택 데이터
+
+`lib/audit.ts` 는 `lib/parse.ts` 와 **의도적으로 분리**되어 있습니다. Eval 과 Audit 은 검증
+대상도, 데이터 계약도, 없을 때의 처리도 다릅니다. 억지로 한 파서로 합치면 한쪽 계약이
+바뀔 때 다른 쪽이 깨집니다.
+
+|  | Eval (`lib/parse.ts`) | Audit (`lib/audit.ts`) |
+| --- | --- | --- |
+| 데이터 원천 | `reports/examples/` 디렉터리 다수 | `reports/audit/latest.json` 하나 |
+| 생산자 | `evals/eval_harness.py` | `evals/harness_audit.py` |
+| **파일이 없으면** | 빌드 실패 (필수 데이터) | `null` — 빌드 성공, 안내 문구만 표시 |
+| **파일이 손상되면** | 빌드 실패 | 빌드 실패 |
+
+부재와 손상을 다르게 다루는 이유는 하나입니다. 아직 한 번도 `--write` 를 실행하지 않은
+저장소에서도 Dashboard 는 빌드되어야 하지만, **손상된 대표 결과를 "없음"으로 갈음하면
+증거 문제를 화면에서 은폐**하게 됩니다.
+
+읽는 파일은 상수로 고정된 하나뿐입니다. slug 같은 외부 입력을 경로에 섞지 않으므로
+`parse.ts` 가 `[slug]` 때문에 두는 경로 탈출 검사가 필요한 지점 자체가 없습니다.
+
+점수·verdict·정렬 순서는 **다시 계산하지 않습니다.** 전부 `harness_audit.py` 가 결정한
+값이며 Dashboard 는 표시만 합니다. 여기서 한 번이라도 재계산하면 화면의 숫자와
+`latest.json` 의 숫자가 갈라질 수 있고, 그러면 어느 쪽이 정본인지 알 수 없게 됩니다.
+
 ## 구조
 
 ```text
 dashboard/
 ├── app/
-│   ├── page.tsx                                 Overview (Summary + Eval 목록)
+│   ├── page.tsx                                 Overview (Audit 구조 검증 + Eval 실행 검증 + Eval 목록)
 │   ├── evals/[evalId]/page.tsx                  Eval 상세 (Timeline · Attempts · 자동 검증)
 │   └── evals/[evalId]/artifacts/[slug]/page.tsx Artifact 뷰어
 ├── components/  Ui · Timeline · Markdown
-└── lib/         types · parse · evals · timeline
+└── lib/         types · parse · evals · timeline · audit
 ```
 
 ## Timeline
