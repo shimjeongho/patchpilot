@@ -57,6 +57,7 @@ eval 이 7개 중 4개뿐인 것은 미완성이다. 앞은 게이트, 뒤는 �
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import hashlib
 import importlib.util
@@ -64,6 +65,7 @@ import json
 import re
 import sys
 import tomllib
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1918,3 +1920,370 @@ def run_audit(root, rubric: tuple[CheckSpec, ...] = RUBRIC) -> dict:
 def to_json(report: dict) -> str:
     """결정론적 JSON 문자열. 같은 입력이면 바이트까지 같다."""
     return json.dumps(report, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# 사람이 읽는 렌더링
+#
+# 렌더러는 `run_audit()` 결과를 **표현만** 한다. 점수·verdict·정렬 순서를 새로
+# 계산하지 않는다. 렌더러가 판정을 한 번이라도 하면 JSON 과 text 가 서로 다른
+# 결론을 낼 수 있고, 그 순간 어느 쪽이 정본인지 알 수 없게 된다.
+# ---------------------------------------------------------------------------
+
+# 감사 범위 밖. 이 목록이 없으면 "94/100" 을 "Harness 가 94% 옳다" 로 오독한다.
+# 점수는 정지 상태 계약의 정합성이지 Harness 의 효과가 아니다.
+NOT_AUDITED = (
+    "Agent 의 실시간 행위. `PreToolUse` / `Stop` Hook 의 담당이다.",
+    "Harness 실행의 상태 전이. `evals/eval_harness.py` 의 담당이다.",
+    "`sample-project/` 의 애플리케이션 코드 품질. 감사 대상은 Harness 다.",
+    "LLM 출력의 내용적 타당성. 기계로 증명할 수 없는 판단은 채점하지 않는다.",
+    "git 상태와 커밋 이력.",
+    "계획 범위와 실제 diff 의 대조. 오탐 위험 때문에 Stop Gate 도 검사하지 않는다.",
+    "점수가 높다는 사실 자체. 계약이 정합적이라는 것과 Harness 가 유효하다는 것은 다르다.",
+)
+
+
+def _failing_checks(report: dict) -> list[dict]:
+    """FAIL 인 check. category 순서와 id 순서를 그대로 따르므로 항상 같은 순서다."""
+    return [
+        check
+        for category in report["categories"]
+        for check in category["checks"]
+        if check["result"] == RESULT_FAIL
+    ]
+
+
+def _min_score_note(report: dict, min_score: int | None) -> str | None:
+    if min_score is None:
+        return None
+    met = "충족" if report["score"] >= min_score else "미달"
+    return "{0} 이상 요구 - {1} (score {2})".format(min_score, met, report["score"])
+
+
+def to_text(report: dict, min_score: int | None = None) -> str:
+    """터미널용 요약. 첫 줄은 기계 판정 토큰이다."""
+    lines = [
+        "AUDIT: {0}".format(report["verdict"]),
+        "",
+        "Score: {0} / {1}".format(report["score"], report["max_score"]),
+        "Critical: {0}".format(len(report["critical_failures"])),
+        "Rubric: {0}".format(report["rubric_version"]),
+        "Digest: {0}".format(report["rubric_digest"]),
+    ]
+    note = _min_score_note(report, min_score)
+    if note is not None:
+        lines.append("Min score: {0}".format(note))
+
+    lines.extend(["", "Category:"])
+    for category in report["categories"]:
+        lines.append(
+            "- {0}: {1}/{2}".format(
+                category["title"], category["score"], category["max_score"]
+            )
+        )
+
+    if report["critical_failures"]:
+        lines.extend(["", "Critical hard gate:"])
+        for failure in report["critical_failures"]:
+            lines.append(
+                "- [{0}] {1} {2}".format(
+                    failure["gate"], failure["check_id"], failure["summary"]
+                )
+            )
+            for evidence in failure["evidence"]:
+                lines.append("    {0}".format(evidence))
+
+    failures = _failing_checks(report)
+    lines.append("")
+    if failures:
+        lines.append("Failures:")
+        for check in failures:
+            lines.append(
+                "- {0} ({1}점{2}) {3}".format(
+                    check["id"],
+                    check["max_score"],
+                    ", Critical" if check["critical"] else "",
+                    check["title"],
+                )
+            )
+            for evidence in check["evidence"]:
+                lines.append("    {0}".format(evidence))
+    else:
+        lines.append("Failures: 없음")
+
+    lines.append("")
+    if report["next_actions"]:
+        lines.append("Next actions:")
+        for index, action in enumerate(report["next_actions"], start=1):
+            lines.append(
+                "{0}. {1} ({2}점{3}) {4}".format(
+                    index,
+                    action["check_id"],
+                    action["max_score"],
+                    ", Critical" if action["critical"] else "",
+                    action["action"],
+                )
+            )
+    else:
+        lines.append("Next actions: 없음")
+
+    if report["warnings"]:
+        lines.extend(["", "Warnings (점수 미반영):"])
+        for warning in report["warnings"]:
+            lines.append("- {0}: {1}".format(warning["id"], warning["summary"]))
+            for item in warning["detail"]:
+                lines.append("    {0}".format(item))
+
+    return "\n".join(lines) + "\n"
+
+
+def to_markdown(report: dict, min_score: int | None = None) -> str:
+    """보존용 Markdown. 첫 줄은 text 와 같은 기계 판정 토큰이다.
+
+    증거 문자열에는 `|` 가 들어갈 수 있으므로 증거는 표가 아니라 목록으로 낸다.
+    """
+    lines = ["AUDIT: {0}".format(report["verdict"]), "", "# PatchPilot Harness Audit", ""]
+
+    rows = [
+        ("Verdict", report["verdict"]),
+        ("Score", "{0} / {1}".format(report["score"], report["max_score"])),
+        ("Critical", str(len(report["critical_failures"]))),
+        ("schema_version", str(report["schema_version"])),
+        ("audit_version", report["audit_version"]),
+        ("rubric_version", report["rubric_version"]),
+        ("rubric_digest", "`{0}`".format(report["rubric_digest"])),
+    ]
+    note = _min_score_note(report, min_score)
+    if note is not None:
+        rows.append(("min_score", note))
+
+    lines.extend(["## 종합", "", "| 항목 | 값 |", "| --- | --- |"])
+    lines.extend("| {0} | {1} |".format(label, value) for label, value in rows)
+
+    lines.extend(["", "## Critical Hard Gate", ""])
+    if report["critical_failures"]:
+        for failure in report["critical_failures"]:
+            lines.append(
+                "- **{0}** - `{1}` {2}".format(
+                    failure["gate"], failure["check_id"], failure["summary"]
+                )
+            )
+            lines.extend("  - {0}".format(item) for item in failure["evidence"])
+    else:
+        lines.append("Critical 실패 없음. Hard Gate 를 통과했다.")
+
+    lines.extend(
+        ["", "## Category 요약", "", "| Category | 점수 | 실패 check |", "| --- | --- | --- |"]
+    )
+    for category in report["categories"]:
+        failed = [
+            check["id"] for check in category["checks"] if check["result"] == RESULT_FAIL
+        ]
+        lines.append(
+            "| {0} | {1} / {2} | {3} |".format(
+                category["title"],
+                category["score"],
+                category["max_score"],
+                ", ".join(failed) if failed else "-",
+            )
+        )
+
+    lines.extend(["", "## Check 상세"])
+    for category in report["categories"]:
+        lines.extend(["", "### {0}".format(category["title"])])
+        for check in category["checks"]:
+            lines.extend(
+                [
+                    "",
+                    "#### {0} - {1} ({2}/{3}){4}".format(
+                        check["id"],
+                        check["result"],
+                        check["score"],
+                        check["max_score"],
+                        " **Critical**" if check["critical"] else "",
+                    ),
+                    "",
+                    check["title"],
+                    "",
+                    "- 계약: {0}".format(check["contract"]),
+                    "- 근거:",
+                ]
+            )
+            lines.extend("  - {0}".format(item) for item in check["evidence"])
+            if check["result"] == RESULT_FAIL:
+                lines.append("- 조치: {0}".format(check["remediation"]))
+
+    lines.extend(["", "## 다음 행동", ""])
+    if report["next_actions"]:
+        for index, action in enumerate(report["next_actions"], start=1):
+            lines.append(
+                "{0}. `{1}` ({2}점{3}) - {4}".format(
+                    index,
+                    action["check_id"],
+                    action["max_score"],
+                    ", Critical" if action["critical"] else "",
+                    action["action"],
+                )
+            )
+    else:
+        lines.append("없음.")
+
+    lines.extend(["", "## 경고 (점수 미반영)", ""])
+    if report["warnings"]:
+        for warning in report["warnings"]:
+            lines.append("- **{0}** {1}".format(warning["id"], warning["summary"]))
+            lines.extend("  - {0}".format(item) for item in warning["detail"])
+    else:
+        lines.append("없음.")
+
+    lines.extend(["", "## Audit이 검사하지 않는 것", ""])
+    lines.extend("- {0}".format(item) for item in NOT_AUDITED)
+
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# CLI
+#
+# 엔진 위의 얇은 층이다. 하는 일은 넷뿐이다.
+#   인자 해석 / `run_audit()` 호출 / 렌더링 / 종료 코드 결정
+#
+# 종료 코드 계약 (CI 가 의존한다)
+#   0 - Audit PASS
+#   1 - Audit FAIL (Critical 존재, 또는 --min-score 미달)
+#   2 - Audit 을 수행하지 못함 (AuditError / 인자 오류 / 쓰기 실패)
+#
+# 1 과 2 를 섞으면 CI 가 "감사 도구 고장" 을 "감사 결과 불합격" 으로 오독한다.
+# 반대 방향이 더 위험하다. 예외가 그대로 새어 나가면 Python 기본 종료 코드가 1 이라
+# 고장이 정상적인 FAIL 로 보인다. 그래서 예상하지 못한 예외까지 2 로 눌러 담는다.
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+FORMAT_TEXT = "text"
+FORMAT_JSON = "json"
+FORMAT_MARKDOWN = "markdown"
+FORMATS = (FORMAT_TEXT, FORMAT_JSON, FORMAT_MARKDOWN)
+
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_ERROR = 2
+
+# 대표 결과. 날짜별 파일을 남기지 않는다. 이력은 git 이 이미 갖고 있고,
+# 파일을 쌓으면 "어느 것이 현재인가" 라는 질문이 새로 생긴다.
+AUDIT_DIR = "reports/audit"
+LATEST_JSON = "reports/audit/latest.json"
+LATEST_MARKDOWN = "reports/audit/latest.md"
+
+
+def apply_min_score(report: dict, min_score: int | None) -> dict:
+    """`--min-score` 미달을 verdict 에만 반영한 사본.
+
+    `critical_failures` 는 **건드리지 않는다.** 임계값은 호출자의 기준이지 Hard
+    Gate 가 아니다. 미달을 Critical 로 위장하면 "거짓말이면 Critical" 이라는
+    rubric 의 기준선이 무너지고, 점수 임계값 하나로 게이트 목록이 오염된다.
+    """
+    if min_score is None or report["score"] >= min_score:
+        return report
+    if report["verdict"] == VERDICT_FAIL:
+        return report
+    lowered = dict(report)
+    lowered["verdict"] = VERDICT_FAIL
+    return lowered
+
+
+def render(report: dict, output_format: str, min_score: int | None = None) -> str:
+    if output_format == FORMAT_JSON:
+        return to_json(report)
+    if output_format == FORMAT_MARKDOWN:
+        return to_markdown(report, min_score)
+    return to_text(report, min_score)
+
+
+def write_representative(root, report: dict, min_score: int | None = None) -> list[str]:
+    """대표 결과 두 파일을 갱신한다. 하나라도 실패하면 `AuditError`.
+
+    두 본문을 먼저 전부 만든 뒤에 쓴다. 쓰기가 실패하면 조용히 넘기지 않고 실행
+    오류로 올린다. 반쯤 갱신된 대표 결과를 PASS 로 끝내면 그 파일이 저장소의 현재
+    상태를 잘못 증언하게 된다.
+    """
+    bodies = (
+        (LATEST_JSON, to_json(report)),
+        (LATEST_MARKDOWN, to_markdown(report, min_score)),
+    )
+    base = Path(root)
+    try:
+        base.joinpath(*AUDIT_DIR.split("/")).mkdir(parents=True, exist_ok=True)
+        for relative, body in bodies:
+            base.joinpath(*relative.split("/")).write_text(body, encoding="utf-8")
+    except OSError as error:
+        raise AuditError(
+            "대표 결과를 쓰지 못했습니다 ({0}: {1})".format(type(error).__name__, error)
+        ) from error
+    return [relative for relative, _body in bodies]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="harness_audit.py",
+        description="PatchPilot Harness 의 정지 상태 통제 계약을 결정론적으로 채점한다",
+    )
+    parser.add_argument(
+        "--format",
+        dest="output_format",
+        default=FORMAT_TEXT,
+        choices=FORMATS,
+        help="출력 형식 (기본값: {0})".format(FORMAT_TEXT),
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=REPO_ROOT,
+        help="감사 대상 저장소 루트 (기본값: 이 파일이 속한 저장소)",
+    )
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="{0} 와 {1} 를 갱신한다".format(LATEST_JSON, LATEST_MARKDOWN),
+    )
+    parser.add_argument(
+        "--min-score",
+        type=int,
+        default=None,
+        metavar="N",
+        help="score 가 N 미만이면 verdict 를 FAIL 로 내리고 1 로 종료한다",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as error:
+        # `--help` 는 0, 인자 오류는 argparse 규약대로 2. 어느 쪽이든 예외를 그대로
+        # 통과시키지 않고 반환값으로 옮겨서 main() 하나로 종료 코드를 결정한다.
+        return int(error.code or EXIT_PASS)
+
+    try:
+        report = apply_min_score(run_audit(args.root), args.min_score)
+        rendered = render(report, args.output_format, args.min_score)
+        written = write_representative(args.root, report, args.min_score) if args.write else []
+    except AuditError as error:
+        print("ERROR: {0}".format(error), file=sys.stderr)
+        return EXIT_ERROR
+    except Exception:  # noqa: BLE001 - 예상 못 한 예외도 "감사 실패" 이지 FAIL 이 아니다
+        traceback.print_exc()
+        print("ERROR: Audit 실행 중 예상하지 못한 예외가 발생했습니다", file=sys.stderr)
+        return EXIT_ERROR
+
+    # JSON 은 stdout 을 독점한다. 진단 문구는 전부 stderr 로 보낸다.
+    print(rendered, end="")
+    for relative in written:
+        print("wrote {0}".format(relative), file=sys.stderr)
+
+    return EXIT_PASS if report["verdict"] == VERDICT_PASS else EXIT_FAIL
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

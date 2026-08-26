@@ -920,3 +920,312 @@ def test_real_repository_smoke(harness_audit, repo_root: Path, capsys):
                     "FAIL: " + ", ".join(failed) if failed else "",
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+#
+# CLI 는 `run_audit()` 위의 얇은 층이어야 한다. 여기서 고정하는 것은 두 가지다.
+#
+#   1. 종료 코드 계약 (0 PASS / 1 FAIL / 2 실행 오류) — CI 가 이것에 의존한다.
+#   2. 렌더러가 판정을 새로 하지 않는다 — 세 형식의 verdict 는 항상 같다.
+#
+# 특히 `--min-score` 는 verdict 만 내리고 `critical_failures` 는 건드리지 않는다.
+# 임계값 미달을 Critical 로 위장하면 Hard Gate 목록이 호출자 인자에 오염된다.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CliResult:
+    code: int
+    out: str
+    err: str
+
+
+@pytest.fixture
+def cli(harness_audit, capsys):
+    """`main()` 을 프로세스 없이 호출하고 종료 코드와 스트림을 함께 돌려준다."""
+
+    def run(*argv: str) -> CliResult:
+        code = harness_audit.main(list(argv))
+        captured = capsys.readouterr()
+        return CliResult(code, captured.out, captured.err)
+
+    return run
+
+
+def audit_files(root: Path) -> list[str]:
+    base = root / "reports" / "audit"
+    if not base.is_dir():
+        return []
+    return sorted(path.relative_to(base).as_posix() for path in base.rglob("*"))
+
+
+def reports_snapshot(root: Path) -> dict[str, bytes]:
+    base = root / "reports"
+    return {
+        path.relative_to(base).as_posix(): path.read_bytes()
+        for path in base.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_default_format_is_text(cli, audit_repo, harness_audit):
+    result = cli("--root", str(audit_repo))
+    assert result.code == 0
+    lines = result.out.splitlines()
+    assert lines[0] == "AUDIT: PASS"
+    assert "Score: {0} / 100".format(BASELINE_SCORE) in lines
+    assert "Critical: 0" in lines
+    assert "Rubric: " + harness_audit.RUBRIC_VERSION in lines
+    assert "Digest: " + harness_audit.RUBRIC_DIGEST in lines
+    for _category_id, title in harness_audit.CATEGORIES:
+        assert any(line.startswith("- {0}:".format(title)) for line in lines), title
+
+
+def test_json_format_is_only_json_on_stdout(cli, audit_repo, harness_audit):
+    result = cli("--root", str(audit_repo), "--format", "json")
+    assert result.code == 0
+    assert result.err == ""
+    document = json.loads(result.out)
+    assert result.out == harness_audit.to_json(harness_audit.run_audit(audit_repo))
+    assert document["verdict"] == BASELINE_VERDICT
+    assert document["score"] == BASELINE_SCORE
+
+
+def test_markdown_format_declares_the_verdict_on_the_first_line(cli, audit_repo):
+    result = cli("--root", str(audit_repo), "--format", "markdown")
+    assert result.code == 0
+    lines = result.out.splitlines()
+    assert lines[0] == "AUDIT: PASS"
+    for heading in (
+        "# PatchPilot Harness Audit",
+        "## 종합",
+        "## Critical Hard Gate",
+        "## Category 요약",
+        "## Check 상세",
+        "## 다음 행동",
+        "## 경고 (점수 미반영)",
+        "## Audit이 검사하지 않는 것",
+    ):
+        assert heading in lines, heading
+
+
+def test_every_check_appears_in_the_markdown_detail(cli, audit_repo, harness_audit):
+    result = cli("--root", str(audit_repo), "--format", "markdown")
+    for spec in harness_audit.RUBRIC:
+        assert "#### {0} - ".format(spec.id) in result.out, spec.id
+
+
+def test_three_formats_never_disagree_on_the_verdict(cli, audit_repo):
+    """렌더러가 판정을 새로 하지 않는다는 증거. 형식만 다르고 결론은 하나다."""
+    _unregister_guard(audit_repo)
+    verdicts = set()
+    codes = set()
+    for output_format in ("text", "json", "markdown"):
+        result = cli("--root", str(audit_repo), "--format", output_format)
+        codes.add(result.code)
+        first = result.out.splitlines()[0]
+        verdicts.add(
+            json.loads(result.out)["verdict"]
+            if output_format == "json"
+            else first[len("AUDIT: ") :]
+        )
+    assert verdicts == {"FAIL"}
+    assert codes == {1}
+
+
+def test_unknown_format_is_an_execution_error(cli, audit_repo):
+    result = cli("--root", str(audit_repo), "--format", "yaml")
+    assert result.code == 2
+    assert result.out == ""
+
+
+def test_unknown_flag_is_an_execution_error(cli, audit_repo):
+    assert cli("--root", str(audit_repo), "--nope").code == 2
+
+
+def test_non_integer_min_score_is_an_execution_error(cli, audit_repo):
+    assert cli("--root", str(audit_repo), "--min-score", "high").code == 2
+
+
+def test_help_exits_zero(cli):
+    result = cli("--help")
+    assert result.code == 0
+    assert "--min-score" in result.out
+
+
+def test_critical_failure_exits_one(cli, audit_repo):
+    _unregister_guard(audit_repo)
+    result = cli("--root", str(audit_repo), "--format", "json")
+    assert result.code == 1
+    document = json.loads(result.out)
+    assert document["verdict"] == "FAIL"
+    assert [failure["check_id"] for failure in document["critical_failures"]] == ["B3"]
+
+
+def test_non_critical_failure_alone_still_passes(cli, audit_repo):
+    """감점은 게이트가 아니다. Critical 이 없으면 종료 코드는 0 이다."""
+    _delete_ci_workflow(audit_repo)
+    result = cli("--root", str(audit_repo), "--format", "json")
+    assert result.code == 0
+    document = json.loads(result.out)
+    assert document["verdict"] == "PASS"
+    assert document["score"] < BASELINE_SCORE
+    assert document["critical_failures"] == []
+
+
+def test_min_score_met_exits_zero(cli, audit_repo):
+    result = cli("--root", str(audit_repo), "--min-score", str(BASELINE_SCORE))
+    assert result.code == 0
+    assert result.out.splitlines()[0] == "AUDIT: PASS"
+
+
+def test_min_score_below_threshold_exits_one(cli, audit_repo):
+    result = cli("--root", str(audit_repo), "--min-score", str(BASELINE_SCORE + 1))
+    assert result.code == 1
+    assert result.out.splitlines()[0] == "AUDIT: FAIL"
+
+
+def test_min_score_failure_does_not_fabricate_critical_failures(cli, audit_repo):
+    """임계값은 호출자의 기준이지 Hard Gate 가 아니다.
+
+    이것이 무너지면 `--min-score` 하나로 "거짓말이면 Critical" 기준선이 오염되고,
+    Critical 목록을 근거로 삼는 모든 소비자가 없는 게이트 위반을 보고하게 된다.
+    """
+    result = cli(
+        "--root", str(audit_repo), "--format", "json", "--min-score", str(BASELINE_SCORE + 1)
+    )
+    assert result.code == 1
+    document = json.loads(result.out)
+    assert document["verdict"] == "FAIL"
+    assert document["critical_failures"] == []
+    assert document["score"] == BASELINE_SCORE
+    # 점수와 check 결과는 임계값과 무관하다. 달라지는 것은 verdict 하나뿐이다.
+    baseline = json.loads(cli("--root", str(audit_repo), "--format", "json").out)
+    assert failing_ids(document) == failing_ids(baseline)
+    assert document["next_actions"] == baseline["next_actions"]
+
+
+def test_min_score_does_not_lift_a_critical_failure(cli, audit_repo):
+    """충족한 임계값이 Critical 을 덮지 않는다. 게이트가 항상 우선이다."""
+    _unregister_guard(audit_repo)
+    result = cli("--root", str(audit_repo), "--format", "json", "--min-score", "0")
+    assert result.code == 1
+    assert json.loads(result.out)["verdict"] == "FAIL"
+
+
+def test_same_arguments_produce_byte_identical_json(cli, audit_repo):
+    for argv in (
+        ("--root", str(audit_repo), "--format", "json"),
+        ("--root", str(audit_repo), "--format", "json", "--min-score", "101"),
+    ):
+        first = cli(*argv)
+        second = cli(*argv)
+        assert first.out == second.out
+        assert first.code == second.code
+
+
+def test_broken_repository_exits_two_without_stdout(cli, audit_repo):
+    """감사 실패는 감사 불합격이 아니다. 1 로 새어나가면 CI 가 고장을 FAIL 로 읽는다."""
+    write(audit_repo, ".claude/settings.json", "{ this is not json")
+    result = cli("--root", str(audit_repo), "--format", "json")
+    assert result.code == 2
+    assert result.out == ""
+    assert "ERROR:" in result.err
+
+
+def test_missing_root_exits_two(cli, tmp_path):
+    assert cli("--root", str(tmp_path / "does-not-exist")).code == 2
+
+
+# ---------------------------------------------------------------------------
+# --write
+# ---------------------------------------------------------------------------
+
+
+def test_without_write_no_file_is_created(cli, audit_repo):
+    before = reports_snapshot(audit_repo)
+    for output_format in ("text", "json", "markdown"):
+        assert cli("--root", str(audit_repo), "--format", output_format).code == 0
+    assert reports_snapshot(audit_repo) == before
+    assert audit_files(audit_repo) == []
+
+
+def test_write_creates_exactly_two_latest_files(cli, audit_repo):
+    assert cli("--root", str(audit_repo), "--write").code == 0
+    assert audit_files(audit_repo) == ["latest.json", "latest.md"]
+
+
+def test_write_touches_nothing_outside_reports_audit(cli, audit_repo):
+    """보존된 대표 결과와 실행 산출물은 감사 대상이지 감사의 출력 대상이 아니다."""
+    (audit_repo / "reports" / "RUN-20260826-1200-BUG-001").mkdir()
+    write(audit_repo, "reports/RUN-20260826-1200-BUG-001/state.json", '{"run_id": "x"}\n')
+    before = reports_snapshot(audit_repo)
+
+    assert cli("--root", str(audit_repo), "--write").code == 0
+
+    after = reports_snapshot(audit_repo)
+    added = set(after) - set(before)
+    assert added == {"audit/latest.json", "audit/latest.md"}
+    for relative, body in before.items():
+        assert after[relative] == body, relative
+
+
+def test_write_keeps_only_latest_and_never_accumulates_history(cli, audit_repo):
+    """이력은 git 이 갖는다. 날짜별 파일을 쌓으면 어느 것이 현재인지 물어야 한다."""
+    for _ in range(3):
+        assert cli("--root", str(audit_repo), "--write").code == 0
+    assert audit_files(audit_repo) == ["latest.json", "latest.md"]
+
+
+def test_written_files_match_stdout(cli, audit_repo):
+    json_out = cli("--root", str(audit_repo), "--format", "json", "--write").out
+    markdown_out = cli("--root", str(audit_repo), "--format", "markdown", "--write").out
+    assert read(audit_repo, "reports/audit/latest.json") == json_out
+    assert read(audit_repo, "reports/audit/latest.md") == markdown_out
+
+
+def test_write_keeps_stdout_pure_json(cli, audit_repo):
+    """`--write` 의 진단 문구가 stdout 을 오염시키면 파이프라인이 깨진다."""
+    result = cli("--root", str(audit_repo), "--format", "json", "--write")
+    assert json.loads(result.out)["verdict"] == BASELINE_VERDICT
+    assert "reports/audit/latest.json" in result.err
+
+
+def test_written_markdown_declares_the_verdict_on_the_first_line(cli, audit_repo):
+    assert cli("--root", str(audit_repo), "--write").code == 0
+    body = read(audit_repo, "reports/audit/latest.md")
+    assert body.splitlines()[0] == "AUDIT: {0}".format(BASELINE_VERDICT)
+
+
+def test_write_failure_is_an_execution_error(cli, audit_repo, monkeypatch, harness_audit):
+    """한 파일만 쓰이고 조용히 PASS 로 끝나는 것이 가장 나쁜 결말이다."""
+    original = Path.write_text
+
+    def explode(self, *args, **kwargs):
+        if self.name == "latest.md":
+            raise OSError("디스크 오류")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", explode)
+    result = cli("--root", str(audit_repo), "--write")
+    assert result.code == 2
+    assert result.out == ""
+    assert "ERROR:" in result.err
+
+
+def test_write_is_the_only_way_to_touch_the_repository(cli, audit_repo):
+    """`--write` 없는 실행은 감사 대상 저장소 전체를 바꾸지 않는다."""
+    before = sorted(
+        (path.relative_to(audit_repo).as_posix(), path.stat().st_size)
+        for path in audit_repo.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    assert cli("--root", str(audit_repo), "--format", "json").code == 0
+    after = sorted(
+        (path.relative_to(audit_repo).as_posix(), path.stat().st_size)
+        for path in audit_repo.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    assert after == before
