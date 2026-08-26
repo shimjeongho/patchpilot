@@ -143,3 +143,77 @@ export interface EvalDetail extends EvalSummary {
   testResults: TestResult[]
   reviewVerdict: Verdict | null
 }
+
+// ---------------------------------------------------------------------------
+// Harness Audit — `evals/harness_audit.py` 의 JSON 봉투 (schema_version 1)
+//
+// Eval 타입과 한 파일에 있지만 **계약이 다르다.** Eval 은 실행된 상태 전이의 기록이고
+// Audit 은 정지 상태 구조 계약의 채점이다. 두 수치를 합산하거나 같은 지표로 부르지
+// 않는다. snake_case 원본을 camelCase 로 옮기기만 하며 값은 바꾸지 않는다.
+// ---------------------------------------------------------------------------
+
+/** rubric 의 check 하나. 이진 판정이므로 부분 점수가 없다. */
+export interface AuditCheck {
+  /** `B3`, `E4b` */
+  id: string
+  title: string
+  result: 'PASS' | 'FAIL'
+  score: number
+  maxScore: number
+  /** Critical Hard Gate 대상인가. 감점과 게이트는 다른 층위다. */
+  critical: boolean
+  /** 근거가 되는 문서 조항. `CLAUDE.md §22` */
+  contract: string
+  evidence: string[]
+  remediation: string
+}
+
+export interface AuditCategory {
+  /** `guard-enforcement` */
+  id: string
+  /** `B. Guard Registration & Enforcement` */
+  title: string
+  score: number
+  maxScore: number
+  checks: AuditCheck[]
+}
+
+/** Critical check 의 실패. 감점이 아니라 게이트 위반이다. */
+export interface AuditCriticalFailure {
+  /** `GUARD_NOT_ENFORCED` */
+  gate: string
+  checkId: string
+  summary: string
+  evidence: string[]
+}
+
+/** 점수와 verdict에 영향을 주지 않는 관측치. */
+export interface AuditWarning {
+  id: string
+  summary: string
+  detail: string[]
+}
+
+export interface AuditNextAction {
+  checkId: string
+  category: string
+  critical: boolean
+  maxScore: number
+  action: string
+}
+
+export interface HarnessAudit {
+  schemaVersion: number
+  auditVersion: string
+  /** 점수는 같은 rubric_version 안에서만 비교할 수 있다. */
+  rubricVersion: string
+  rubricDigest: string
+  /** Critical 실패가 하나라도 있으면 FAIL. 점수 임계값과는 무관하다. */
+  verdict: 'PASS' | 'FAIL'
+  score: number
+  maxScore: number
+  categories: AuditCategory[]
+  criticalFailures: AuditCriticalFailure[]
+  warnings: AuditWarning[]
+  nextActions: AuditNextAction[]
+}

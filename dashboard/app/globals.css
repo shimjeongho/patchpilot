@@ -1407,3 +1407,354 @@ details.checks[open] summary {
     transition: none !important;
   }
 }
+
+/* --- Harness Audit (구조 검증) --------------------------------------------
+   기존 토큰만 재사용한다. ok / fail / warn 세 계열의 의미는 Eval 쪽과 동일하며,
+   여기서 새 색 체계를 만들지 않는다. Audit 고유의 구분은 색이 아니라 배치다.
+   Critical 위반은 별도 블록으로 올리고, 단순 감점은 warn 블록에 둔다. */
+
+.note--lead {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+}
+
+.note--lead strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.audit {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.audit__head {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.audit__verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 13px;
+  border-left: 3px solid var(--border-strong);
+}
+
+.audit__verdict--ok {
+  border-left-color: var(--ok);
+}
+
+.audit__verdict--fail {
+  border-left-color: var(--fail);
+}
+
+.audit__verdict-token {
+  font-family: var(--mono);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.audit__verdict--ok .audit__verdict-token {
+  color: var(--ok);
+}
+
+.audit__verdict--fail .audit__verdict-token {
+  color: var(--fail);
+}
+
+.audit__verdict-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.audit__score {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--mono);
+}
+
+.audit__score-value {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+
+.audit__score-max {
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.audit__meta {
+  display: flex;
+  gap: 24px;
+  margin: 0 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.audit__meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audit__meta dt {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.audit__meta dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.audit__meta dd.is-fail {
+  color: var(--fail);
+  font-weight: 700;
+}
+
+/* --- Category 요약 --------------------------------------------------------- */
+
+.audit-cats {
+  list-style: none;
+  margin: 0;
+  padding: 14px 20px 16px;
+  display: grid;
+  gap: 7px;
+}
+
+.audit-cat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px 62px;
+  align-items: center;
+  gap: 14px;
+}
+
+.audit-cat__name {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-cat--ok .audit-cat__name {
+  color: var(--text);
+}
+
+.audit-cat__bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.audit-cat__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--muted);
+}
+
+.audit-cat--ok .audit-cat__fill {
+  background: var(--ok);
+}
+
+.audit-cat--warn .audit-cat__fill {
+  background: var(--warn);
+}
+
+.audit-cat--fail .audit-cat__fill {
+  background: var(--fail);
+}
+
+.audit-cat__score {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: right;
+  color: var(--text-faint);
+}
+
+.audit-cat--ok .audit-cat__score {
+  color: var(--ok);
+}
+
+.audit-cat--warn .audit-cat__score {
+  color: var(--warn);
+}
+
+.audit-cat--fail .audit-cat__score {
+  color: var(--fail);
+}
+
+/* --- 미달 / Critical / Next Actions ---------------------------------------- */
+
+.audit-block {
+  padding: 14px 20px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Critical 위반은 배경까지 바꿔 감점 블록과 한눈에 구분되게 한다. */
+.audit-block--fail {
+  background: var(--fail-bg);
+}
+
+.audit-block--warn {
+  background: var(--warn-bg);
+}
+
+.audit-block__title {
+  margin: 0 0 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.audit-block--fail .audit-block__title {
+  color: var(--fail);
+}
+
+.audit-miss {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.audit-miss__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.audit-miss__id {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex: none;
+}
+
+.audit-miss__text {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.audit-miss__weight {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--warn);
+  margin-left: auto;
+  flex: none;
+}
+
+.audit-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.audit-actions__row {
+  display: grid;
+  gap: 5px;
+}
+
+.audit-actions__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-actions__weight {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.audit-actions__text {
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.audit-warn {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+  font-size: 12.5px;
+}
+
+.audit-warn__detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.audit-digest {
+  word-break: break-all;
+}
+
+/* --- 대표 결과 부재 -------------------------------------------------------- */
+
+.audit-empty__title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.audit-empty__hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-faint);
+}
+
+.audit-empty code {
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+@media (max-width: 860px) {
+  .audit__meta {
+    margin-left: 0;
+  }
+
+  .audit-cat {
+    grid-template-columns: minmax(0, 1fr) 62px;
+  }
+
+  .audit-cat__bar {
+    display: none;
+  }
+}
