@@ -52,6 +52,10 @@ reports/*
 !reports/examples/
 !reports/examples/**
 
+# Harness Audit 대표 결과 (latest 두 파일만 보존한다)
+!reports/audit/
+!reports/audit/**
+
 
 # ==============================
 # PatchPilot Eval 실행 상태

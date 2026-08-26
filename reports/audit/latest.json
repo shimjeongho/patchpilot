@@ -1,0 +1,575 @@
+{
+  "schema_version": 1,
+  "audit_version": "1.0.0",
+  "rubric_version": "1.0.0",
+  "rubric_digest": "sha256:2d63e22b8c5dab0e3852cbd48723f536edfbba9cfbd31d1b0b3d8a3ab7690edd",
+  "verdict": "PASS",
+  "score": 94,
+  "max_score": 100,
+  "categories": [
+    {
+      "id": "agent-isolation",
+      "title": "A. Agent Role Isolation",
+      "score": 13,
+      "max_score": 13,
+      "checks": [
+        {
+          "id": "A1",
+          "title": "Agent 정의 4개와 frontmatter 3키 존재",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §11",
+          "evidence": [
+            ".claude/agents/: developer, planner, reviewer, tester",
+            "각 frontmatter 에 name / description / tools 존재"
+          ],
+          "remediation": ".claude/agents/ 에 4개 Agent 정의를 두고 name / description / tools 를 채운다."
+        },
+        {
+          "id": "A2",
+          "title": "frontmatter name 집합이 AGENT_TYPES 와 일치",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §11",
+          "evidence": [
+            "_guard_common.AGENT_TYPES = developer, planner, reviewer, tester",
+            "frontmatter name 집합 일치"
+          ],
+          "remediation": "Agent 정의의 name 과 _guard_common.AGENT_TYPES 를 같은 집합으로 맞춘다."
+        },
+        {
+          "id": "A3",
+          "title": "Agent tools 가 최소 권한 행렬과 일치",
+          "result": "PASS",
+          "score": 4,
+          "max_score": 4,
+          "critical": true,
+          "contract": "CLAUDE.md §11",
+          "evidence": [
+            "developer: Edit, Glob, Grep, Read, Write",
+            "planner: Glob, Grep, Read, Write",
+            "reviewer: Bash, Glob, Grep, Read, Write",
+            "tester: Bash, Glob, Grep, Read, Write"
+          ],
+          "remediation": "Agent frontmatter 의 tools 를 최소 권한 행렬대로 되돌린다. 초과 권한이 하나라도 있으면 역할 분리 주장이 거짓이 된다."
+        },
+        {
+          "id": "A4",
+          "title": "Agent 정의에 금지 사항 / 종료 전 체크리스트 존재",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §11",
+          "evidence": [
+            "4개 Agent 정의 모두 금지 사항 / 종료 전 체크리스트 절 보유"
+          ],
+          "remediation": "각 Agent 정의에 `## 5. 금지 사항` 과 `## 6. 종료 전 체크리스트` 절을 둔다."
+        }
+      ]
+    },
+    {
+      "id": "guard-enforcement",
+      "title": "B. Guard Registration & Enforcement",
+      "score": 20,
+      "max_score": 20,
+      "checks": [
+        {
+          "id": "B1",
+          "title": "Guard 구현 파일과 공통 모듈 존재",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            ".claude/hooks/: _guard_common.py, guard_bash_scope.py, guard_plan_scope.py, guard_stop_gate.py, guard_test_files.py"
+          ],
+          "remediation": ".claude/hooks/ 에 공통 모듈과 Guard 4종을 둔다."
+        },
+        {
+          "id": "B2",
+          "title": "HOOK_ID 가 파일명 규약과 일치하고 서로 다름",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §22, §25",
+          "evidence": [
+            "guard_bash_scope.py -> guard-bash-scope",
+            "guard_plan_scope.py -> guard-plan-scope",
+            "guard_stop_gate.py -> guard-stop-gate",
+            "guard_test_files.py -> guard-test-files"
+          ],
+          "remediation": "각 Guard 의 HOOK_ID 를 파일명의 kebab 변환과 같게 맞춘다. 비활성 스위치가 이 값으로 동작한다."
+        },
+        {
+          "id": "B3",
+          "title": "settings.json 등록 집합이 Guard 파일 집합과 양방향 일치",
+          "result": "PASS",
+          "score": 8,
+          "max_score": 8,
+          "critical": true,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            "guard_bash_scope.py -> PreToolUse matcher=Bash",
+            "guard_plan_scope.py -> PreToolUse matcher=Write|Edit",
+            "guard_stop_gate.py -> Stop matcher=None",
+            "guard_test_files.py -> PreToolUse matcher=Write|Edit"
+          ],
+          "remediation": "Guard 파일과 settings.json 등록을 1:1 로 맞추고 matcher 를 담당 도구에 맞춘다. 등록되지 않은 Guard 는 전혀 동작하지 않는다."
+        },
+        {
+          "id": "B4",
+          "title": "Stop 훅이 중첩형으로 등록됨",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": true,
+          "contract": "CLAUDE.md §25",
+          "evidence": [
+            "Stop 등록이 중첩형 (hooks 배열을 감싼 형태) 입니다: 1건"
+          ],
+          "remediation": "settings.json 의 Stop 등록을 `[{\"hooks\": [...]}]` 중첩형으로 되돌린다. 평면형은 오류 없이 무시된다."
+        },
+        {
+          "id": "B5",
+          "title": "Guard 마다 단위 테스트 모듈 존재",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            "evals/tests/test_guard_bash_scope.py",
+            "evals/tests/test_guard_plan_scope.py",
+            "evals/tests/test_guard_stop_gate.py",
+            "evals/tests/test_guard_test_files.py"
+          ],
+          "remediation": "evals/tests/ 에 Guard 별 test_<guard>.py 를 둔다."
+        }
+      ]
+    },
+    {
+      "id": "contract-consistency",
+      "title": "C. Control Contract Consistency",
+      "score": 19,
+      "max_score": 19,
+      "checks": [
+        {
+          "id": "C1",
+          "title": "실패 원인 분류 5종이 4개 소스에서 일치",
+          "result": "PASS",
+          "score": 5,
+          "max_score": 5,
+          "critical": true,
+          "contract": "CLAUDE.md §14",
+          "evidence": [
+            "4개 소스 일치: ENVIRONMENT_ERROR, PLAN_DEFECT, PRODUCT_CODE_DEFECT, TEST_DEFECT, UNKNOWN",
+            ".claude/agents/tester.md",
+            "CLAUDE.md §14",
+            "dashboard/lib/types.ts",
+            "evals/eval_harness.py FAILURE_CATEGORIES"
+          ],
+          "remediation": "CLAUDE.md §14 / tester.md / eval_harness.FAILURE_CATEGORIES / dashboard types.ts 의 분류 집합을 같게 맞춘다. 갈라지면 라우팅이 소스마다 달라진다."
+        },
+        {
+          "id": "C2",
+          "title": "BLOCKED 사유 코드가 문서와 구현에서 일치",
+          "result": "PASS",
+          "score": 5,
+          "max_score": 5,
+          "critical": true,
+          "contract": "CLAUDE.md §19, §20",
+          "evidence": [
+            "patchpilot.md §10 == guard_stop_gate.BLOCKED_REASONS (13개)"
+          ],
+          "remediation": "patchpilot.md §10 의 사유 코드 목록과 guard_stop_gate.BLOCKED_REASONS 를 같게 맞춘다."
+        },
+        {
+          "id": "C3",
+          "title": "고정 테스트 명령이 5개 소스에서 동일",
+          "result": "PASS",
+          "score": 4,
+          "max_score": 4,
+          "critical": false,
+          "contract": "CLAUDE.md §10",
+          "evidence": [
+            "5개 소스 모두 'uv run pytest sample-project/tests -q'",
+            ".claude/agents/tester.md",
+            ".claude/commands/patchpilot.md",
+            ".claude/hooks/guard_bash_scope.py",
+            "CLAUDE.md",
+            "evals/eval_harness.py PYTEST_COMMAND"
+          ],
+          "remediation": "CLAUDE.md §10 / tester.md / patchpilot.md / PYTEST_COMMAND / TESTER_PYTEST_TOKENS 의 명령을 한 문자열로 통일한다."
+        },
+        {
+          "id": "C4",
+          "title": "retry_budget = 3 이 4개 소스에서 일치",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §16",
+          "evidence": [
+            "4개 소스 모두 retry_budget = 3",
+            ".claude/commands/patchpilot.md",
+            "CLAUDE.md §16",
+            "evals/eval_harness.py Scenario",
+            "reports/examples/*/state.json"
+          ],
+          "remediation": "CLAUDE.md §16 / patchpilot.md §6 / Scenario.expected_retry_budget / 대표 결과 state.json 의 예산을 같게 맞춘다."
+        },
+        {
+          "id": "C5",
+          "title": "기계 판정 첫 줄 토큰이 판정 코드 3곳에서 동일",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §14, §15",
+          "evidence": [
+            ".claude/hooks/guard_stop_gate.py: STATUS=PASS / VERDICT=APPROVED, CHANGES_REQUESTED",
+            "evals/eval_harness.py: STATUS=FAIL, PASS / VERDICT=APPROVED",
+            "dashboard/lib/parse.ts: STATUS=FAIL, PASS / VERDICT=(없음)"
+          ],
+          "remediation": "STATUS: PASS / FAIL 과 VERDICT: APPROVED / CHANGES_REQUESTED 이외의 토큰을 판정 코드에서 없앤다."
+        }
+      ]
+    },
+    {
+      "id": "artifact-evidence",
+      "title": "D. Artifact & Evidence Contract",
+      "score": 13,
+      "max_score": 13,
+      "checks": [
+        {
+          "id": "D1",
+          "title": "보존된 대표 결과에 state.json 과 report.md 존재",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §12",
+          "evidence": [
+            "대표 결과 4건: EVAL-20260820-1318-HARNESS-EVAL-001, EVAL-20260820-1443-HARNESS-EVAL-002, EVAL-20260820-1554-HARNESS-EVAL-003, EVAL-20260820-1752-HARNESS-EVAL-004"
+          ],
+          "remediation": "reports/examples/ 의 각 실행에 state.json 과 report.md 를 함께 보존한다."
+        },
+        {
+          "id": "D2",
+          "title": "대표 결과 state.json 의 스키마와 enum 유효",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §19",
+          "evidence": [
+            "대표 결과 4건의 state.json 이 스키마와 enum 계약을 만족"
+          ],
+          "remediation": "final_status / blocked_reason / failure_category / retry 값을 계약 안의 값으로 되돌린다."
+        },
+        {
+          "id": "D3",
+          "title": "Stop Gate 불변식 G1~G19 replay 위반 0건",
+          "result": "PASS",
+          "score": 4,
+          "max_score": 4,
+          "critical": true,
+          "contract": "CLAUDE.md §25",
+          "evidence": [
+            "guard_stop_gate.check_run() replay",
+            "EVAL-20260820-1318-HARNESS-EVAL-001: SUCCESS / 위반 0건",
+            "EVAL-20260820-1443-HARNESS-EVAL-002: SUCCESS / 위반 0건",
+            "EVAL-20260820-1554-HARNESS-EVAL-003: BLOCKED / 위반 0건",
+            "EVAL-20260820-1752-HARNESS-EVAL-004: BLOCKED / 위반 0건"
+          ],
+          "remediation": "대표 결과가 Stop Gate 불변식을 위반한다. 증거를 수정하지 말고 왜 어긋났는지 먼저 규명한다."
+        },
+        {
+          "id": "D4",
+          "title": "대표 결과 eval-result.md 첫 줄이 EVAL: PASS",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": true,
+          "contract": "evals/README.md §8",
+          "evidence": [
+            "대표 결과 4건 모두 첫 줄이 'EVAL: PASS'"
+          ],
+          "remediation": "FAIL 인 실행을 대표 결과로 두지 않는다. 검증에 통과한 실행만 승격한다."
+        },
+        {
+          "id": "D5",
+          "title": "gitignore 가 실행 산출물을 무시하고 대표 결과를 보존",
+          "result": "PASS",
+          "score": 1,
+          "max_score": 1,
+          "critical": false,
+          "contract": "CLAUDE.md §12",
+          "evidence": [
+            "reports/* 무시 + reports/examples/** 보존"
+          ],
+          "remediation": ".gitignore 에 reports/* 무시와 !reports/examples/** 예외를 함께 둔다."
+        }
+      ]
+    },
+    {
+      "id": "eval-coverage",
+      "title": "E. Eval Coverage & Replay",
+      "score": 15,
+      "max_score": 17,
+      "checks": [
+        {
+          "id": "E1",
+          "title": "시나리오 정의의 task 와 install fixture 실재",
+          "result": "PASS",
+          "score": 4,
+          "max_score": 4,
+          "critical": false,
+          "contract": "evals/README.md §12",
+          "evidence": [
+            "harness-eval-001: task + fixture 2개",
+            "harness-eval-002: task + fixture 4개",
+            "harness-eval-003: task + fixture 4개",
+            "harness-eval-004: task + fixture 2개"
+          ],
+          "remediation": "Scenario 가 가리키는 task 와 fixture 파일을 evals/ 아래에 둔다."
+        },
+        {
+          "id": "E2",
+          "title": "회귀 기준 대표 결과가 전부 보존됨",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "evals/README.md §10",
+          "evidence": [
+            "harness-eval-001 -> reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001",
+            "harness-eval-002 -> reports/examples/EVAL-20260820-1443-HARNESS-EVAL-002",
+            "harness-eval-003 -> reports/examples/EVAL-20260820-1554-HARNESS-EVAL-003",
+            "harness-eval-004 -> reports/examples/EVAL-20260820-1752-HARNESS-EVAL-004"
+          ],
+          "remediation": "REGRESSION_EXAMPLES 의 각 항목을 reports/examples/ 로 승격한다."
+        },
+        {
+          "id": "E3",
+          "title": "eval-result.md 의 종합 수치와 표 행 수가 일치",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "evals/README.md §8",
+          "evidence": [
+            "EVAL-20260820-1318-HARNESS-EVAL-001: 27/27 항목 (표 27행)",
+            "EVAL-20260820-1443-HARNESS-EVAL-002: 37/37 항목 (표 37행)",
+            "EVAL-20260820-1554-HARNESS-EVAL-003: 28/28 항목 (표 28행)",
+            "EVAL-20260820-1752-HARNESS-EVAL-004: 55/55 항목 (표 55행)"
+          ],
+          "remediation": "eval-result.md 를 손으로 고치지 않는다. eval_harness 가 쓴 원본을 그대로 보존한다."
+        },
+        {
+          "id": "E4a",
+          "title": "검증된 종료 경로가 4개 이상",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §20",
+          "evidence": [
+            "검증된 종료 경로 4/7개",
+            "ENVIRONMENT_ERROR, PLAN_DEFECT_REPLAN, PRODUCT_CODE_DEFECT_RETRY, RETRY_BUDGET_EXCEEDED"
+          ],
+          "remediation": "결정론적 eval 로 검증된 종료 경로를 4개 이상으로 만든다."
+        },
+        {
+          "id": "E4b",
+          "title": "종료 경로 7개 전부에 결정론적 eval 존재",
+          "result": "FAIL",
+          "score": 0,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §20",
+          "evidence": [
+            "검증되지 않은 종료 경로 3개: REVIEW_CHANGES_REQUESTED_NO_BUDGET, TEST_DEFECT_NEEDS_HUMAN, UNKNOWN_TWICE",
+            "검증됨: ENVIRONMENT_ERROR, PLAN_DEFECT_REPLAN, PRODUCT_CODE_DEFECT_RETRY, RETRY_BUDGET_EXCEEDED"
+          ],
+          "remediation": "TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다."
+        },
+        {
+          "id": "E5",
+          "title": "시나리오가 참조하는 결함 모듈이 전부 존재",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "evals/README.md §11",
+          "evidence": [
+            "참조된 결함 모듈 6개 모두 존재: env_error_001, plan_defect_001, retry_001, retry_budget_001, retry_budget_002, retry_budget_003"
+          ],
+          "remediation": "Scenario 가 참조하는 fault id 마다 evals/faults/<id>.py 를 둔다."
+        },
+        {
+          "id": "E6",
+          "title": "연쇄 주입 시나리오의 결함이 서로 다름",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "evals/README.md §3-12",
+          "evidence": [
+            "harness-eval-004: 연쇄 3개 모두 서로 다름"
+          ],
+          "remediation": "같은 결함을 반복 주입하지 않는다. fault_sequence 항목을 서로 다르게 만든다."
+        }
+      ]
+    },
+    {
+      "id": "doc-consistency",
+      "title": "F. Documentation Consistency",
+      "score": 10,
+      "max_score": 10,
+      "checks": [
+        {
+          "id": "F1",
+          "title": "CLAUDE.md §22 완료 항목이 지목하는 파일 실재",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            "§22 완료 항목 6개",
+            "확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, sample-project, sample-project/tests"
+          ],
+          "remediation": "§22 의 `[x]` 항목이 가리키는 파일을 실제로 두거나, 구현되지 않았다면 `[ ]` 로 되돌린다."
+        },
+        {
+          "id": "F2",
+          "title": "README Hook 표가 settings.json 등록과 일치",
+          "result": "PASS",
+          "score": 3,
+          "max_score": 3,
+          "critical": false,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            "README Hook 표 4행 == settings.json 등록"
+          ],
+          "remediation": "README 의 Hook 표를 실제 등록 집합과 같게 맞춘다."
+        },
+        {
+          "id": "F3",
+          "title": "README 권한 표가 Agent frontmatter 와 일치",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §11",
+          "evidence": [
+            "developer: Edit, Glob, Grep, Read, Write",
+            "planner: Glob, Grep, Read, Write",
+            "reviewer: Bash, Glob, Grep, Read, Write",
+            "tester: Bash, Glob, Grep, Read, Write"
+          ],
+          "remediation": "README 의 Agent 권한 표를 frontmatter 의 tools 와 같게 맞춘다."
+        },
+        {
+          "id": "F4",
+          "title": "문서의 Stop Gate 불변식 개수 주장이 구현과 일치",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §25",
+          "evidence": [
+            "guard_stop_gate.py = G1~G19 (19개)",
+            "문서 주장 일치: README.md"
+          ],
+          "remediation": "문서의 `G1~GN` 주장을 guard_stop_gate.py 의 실제 위반 ID 수와 맞춘다."
+        }
+      ]
+    },
+    {
+      "id": "automation",
+      "title": "G. Reproducibility & Automation",
+      "score": 4,
+      "max_score": 8,
+      "checks": [
+        {
+          "id": "G1",
+          "title": "CI 워크플로가 세 검증기를 모두 실행",
+          "result": "FAIL",
+          "score": 0,
+          "max_score": 4,
+          "critical": false,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            ".github/workflows/ 에 워크플로가 없습니다"
+          ],
+          "remediation": ".github/workflows/ 에 단위 테스트 / selftest / audit 을 모두 실행하는 워크플로를 추가한다."
+        },
+        {
+          "id": "G2",
+          "title": "uv 잠금 파일과 Python 버전 고정",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §24",
+          "evidence": [
+            "uv.lock / .python-version / pyproject.toml dev pytest 선언 확인"
+          ],
+          "remediation": "uv.lock 과 .python-version 을 커밋하고 pyproject.toml dev 그룹에 pytest 를 선언한다."
+        },
+        {
+          "id": "G3",
+          "title": "Audit 자기 검증 테스트와 rubric 무결성",
+          "result": "PASS",
+          "score": 2,
+          "max_score": 2,
+          "critical": false,
+          "contract": "CLAUDE.md §22",
+          "evidence": [
+            "evals/tests/test_harness_audit.py 존재",
+            "rubric_digest = sha256:2d63e22b8c5dab0e3852cbd48723f536edfbba9cfbd31d1b0b3d8a3ab7690edd",
+            "rubric_version = 1.0.0 / check 33개"
+          ],
+          "remediation": "rubric 을 바꿨다면 RUBRIC_VERSION 과 RUBRIC_DIGEST 를 함께 갱신한다."
+        }
+      ]
+    }
+  ],
+  "critical_failures": [],
+  "warnings": [
+    {
+      "id": "W-EVAL-ROUTES",
+      "summary": "결정론적 eval 이 없는 종료 경로 3개",
+      "detail": [
+        "REVIEW_CHANGES_REQUESTED_NO_BUDGET",
+        "TEST_DEFECT_NEEDS_HUMAN",
+        "UNKNOWN_TWICE"
+      ]
+    }
+  ],
+  "next_actions": [
+    {
+      "check_id": "G1",
+      "category": "automation",
+      "critical": false,
+      "max_score": 4,
+      "action": ".github/workflows/ 에 단위 테스트 / selftest / audit 을 모두 실행하는 워크플로를 추가한다."
+    },
+    {
+      "check_id": "E4b",
+      "category": "eval-coverage",
+      "critical": false,
+      "max_score": 2,
+      "action": "TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다."
+    }
+  ]
+}
