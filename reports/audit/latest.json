@@ -4,7 +4,7 @@
   "rubric_version": "1.0.0",
   "rubric_digest": "sha256:2d63e22b8c5dab0e3852cbd48723f536edfbba9cfbd31d1b0b3d8a3ab7690edd",
   "verdict": "PASS",
-  "score": 94,
+  "score": 98,
   "max_score": 100,
   "categories": [
     {
@@ -444,7 +444,7 @@
           "critical": false,
           "contract": "CLAUDE.md §22",
           "evidence": [
-            "§22 완료 항목 9개",
+            "§22 완료 항목 10개",
             "확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, dashboard, evals, sample-project, sample-project/tests"
           ],
           "remediation": "§22 의 `[x]` 항목이 가리키는 파일을 실제로 두거나, 구현되지 않았다면 `[ ]` 로 되돌린다."
@@ -497,19 +497,20 @@
     {
       "id": "automation",
       "title": "G. Reproducibility & Automation",
-      "score": 4,
+      "score": 8,
       "max_score": 8,
       "checks": [
         {
           "id": "G1",
           "title": "CI 워크플로가 세 검증기를 모두 실행",
-          "result": "FAIL",
-          "score": 0,
+          "result": "PASS",
+          "score": 4,
           "max_score": 4,
           "critical": false,
           "contract": "CLAUDE.md §22",
           "evidence": [
-            ".github/workflows/ 에 워크플로가 없습니다"
+            ".github/workflows/ci.yml 가 세 검증기를 모두 실행",
+            "pytest evals/tests, eval_harness.py selftest, harness_audit.py"
           ],
           "remediation": ".github/workflows/ 에 단위 테스트 / selftest / audit 을 모두 실행하는 워크플로를 추가한다."
         },
@@ -557,13 +558,6 @@
     }
   ],
   "next_actions": [
-    {
-      "check_id": "G1",
-      "category": "automation",
-      "critical": false,
-      "max_score": 4,
-      "action": ".github/workflows/ 에 단위 테스트 / selftest / audit 을 모두 실행하는 워크플로를 추가한다."
-    },
     {
       "check_id": "E4b",
       "category": "eval-coverage",

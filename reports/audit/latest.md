@@ -7,7 +7,7 @@ AUDIT: PASS
 | 항목 | 값 |
 | --- | --- |
 | Verdict | PASS |
-| Score | 94 / 100 |
+| Score | 98 / 100 |
 | Critical | 0 |
 | schema_version | 1 |
 | audit_version | 1.0.0 |
@@ -28,7 +28,7 @@ Critical 실패 없음. Hard Gate 를 통과했다.
 | D. Artifact & Evidence Contract | 13 / 13 | - |
 | E. Eval Coverage & Replay | 15 / 17 | E4b |
 | F. Documentation Consistency | 10 / 10 | - |
-| G. Reproducibility & Automation | 4 / 8 | G1 |
+| G. Reproducibility & Automation | 8 / 8 | - |
 
 ## Check 상세
 
@@ -303,7 +303,7 @@ CLAUDE.md §22 완료 항목이 지목하는 파일 실재
 
 - 계약: CLAUDE.md §22
 - 근거:
-  - §22 완료 항목 9개
+  - §22 완료 항목 10개
   - 확인된 경로: .claude/hooks/guard_bash_scope.py, .claude/hooks/guard_plan_scope.py, .claude/hooks/guard_stop_gate.py, .claude/hooks/guard_test_files.py, dashboard, evals, sample-project, sample-project/tests
 
 #### F2 - PASS (3/3)
@@ -336,14 +336,14 @@ README 권한 표가 Agent frontmatter 와 일치
 
 ### G. Reproducibility & Automation
 
-#### G1 - FAIL (0/4)
+#### G1 - PASS (4/4)
 
 CI 워크플로가 세 검증기를 모두 실행
 
 - 계약: CLAUDE.md §22
 - 근거:
-  - .github/workflows/ 에 워크플로가 없습니다
-- 조치: .github/workflows/ 에 단위 테스트 / selftest / audit 을 모두 실행하는 워크플로를 추가한다.
+  - .github/workflows/ci.yml 가 세 검증기를 모두 실행
+  - pytest evals/tests, eval_harness.py selftest, harness_audit.py
 
 #### G2 - PASS (2/2)
 
@@ -365,8 +365,7 @@ Audit 자기 검증 테스트와 rubric 무결성
 
 ## 다음 행동
 
-1. `G1` (4점) - .github/workflows/ 에 단위 테스트 / selftest / audit 을 모두 실행하는 워크플로를 추가한다.
-2. `E4b` (2점) - TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다.
+1. `E4b` (2점) - TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다.
 
 ## 경고 (점수 미반영)
 
