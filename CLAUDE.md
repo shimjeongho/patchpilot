@@ -589,8 +589,16 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 * [x] `/patchpilot-audit` 커맨드 — Audit 실행 wrapper (재채점하지 않음, §26)
 * [x] Dashboard 구조 검증 표시 — Audit 결과와 Eval 결과를 분리해 시각화 (`dashboard/`)
 * [ ] `PreToolUse` Hook — `reports/<run-id>/` 쓰기 주체 제한 (state.json / report.md는 Orchestrator만)
-* [ ] CI 워크플로 — 단위 테스트 / selftest / audit 세 검증기를 모두 실행 (Audit check G1)
+* [x] CI 워크플로 — 단위 테스트 / selftest / audit 세 검증기를 모두 실행 (`.github/workflows/ci.yml`, Audit check G1)
 * [ ] 종료 경로 7개 전부에 대한 결정론적 Eval (Audit check E4b)
+
+CI 워크플로는 `main` push · `main` 대상 PR · 수동 실행에서 `verify` 와 `dashboard` 두 job 을 병렬로 돌립니다.
+`verify` 는 세 검증기와 §10 고정 테스트 명령을, `dashboard` 는 typecheck 와 build 를 실행합니다.
+2026-08-27 `main` push 에서 두 job 모두 성공했습니다.
+
+러너는 `ubuntu-latest` 하나입니다. **CI 통과는 Linux 러너에서 검증기가 통과했다는 사실이며, 모든 실행 환경을 보장하지 않습니다.**
+Windows 경로 규칙을 검사하는 테스트는 Linux 에서 skip 되고, 심볼릭 링크 우회 차단 테스트는 Windows 에서 skip 됩니다.
+두 플랫폼의 커버리지는 서로를 대체하지 않습니다.
 
 Hook이 담당하지 않는 제약은 도구 권한(`tools:`)과 각 Agent의 금지 사항으로 통제합니다.
 Hook 판정 로직은 `evals/tests/` 에서 단위 검증되며, 판정을 건너뛰어야 할 때는

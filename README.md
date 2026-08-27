@@ -10,8 +10,10 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 
 | 검증 층 | 무엇을 보는가 | 현재 결과 |
 | --- | --- | --- |
-| **Harness Audit** (구조 검증) | 저장소가 선언한 통제 계약이 실제로 갖춰져 있고 서로 모순되지 않는가 | `PASS` · 94 / 100 · Critical 0 |
+| **Harness Audit** (구조 검증) | 저장소가 선언한 통제 계약이 실제로 갖춰져 있고 서로 모순되지 않는가 | `PASS` · 98 / 100 · Critical 0 |
 | **Harness Eval** (실행 검증) | 결함을 주입했을 때 Harness가 실제로 어떤 상태 전이를 거치는가 | 4 시나리오 · 147 / 147 항목 |
+
+두 층의 검증기는 GitHub Actions에서도 자동 실행됩니다. `main` push · `main` 대상 PR · 수동 실행(`workflow_dispatch`)에서 단위 테스트 · `sample-project` 테스트 · `selftest` · Harness Audit이 돌고, Dashboard의 typecheck와 build가 별도 job으로 함께 돕니다. 러너는 `ubuntu-latest` 하나이므로 **CI 통과는 Linux 러너에서 검증기가 통과했다는 사실이며, 모든 실행 환경을 보장하지 않습니다.**
 
 **🔗 Dashboard Live Demo — https://patchpilot-five.vercel.app**
 
@@ -573,7 +575,7 @@ Guard를 만들어 두고 `settings.json`에 등록하지 않으면 그 Guard는
 
 > **Audit이 PASS라는 것은 Harness가 실제로 동작한다는 증명이 아닙니다.** 계약이 정합적이라는 증거이고, 실제 동작 검증은 Eval의 담당입니다. Audit은 `pytest`도 `selftest`도 실행하지 않습니다.
 
-### 채점 결과 — 현재 94 / 100
+### 채점 결과 — 현재 98 / 100
 
 7개 Category · 33개 check · 100점이며, 모든 check는 **이진 판정**입니다. PASS면 만점, FAIL이면 0점이고 부분 점수가 없습니다. 부분 점수를 허용하는 순간 "기계적으로 증명 가능한 사실 하나"라는 기준이 무너지기 때문입니다.
 
@@ -585,14 +587,13 @@ Guard를 만들어 두고 `settings.json`에 등록하지 않으면 그 Guard는
 | D. Artifact & Evidence Contract | 13 / 13 | 보존된 대표 결과의 스키마와 Stop Gate 불변식 replay |
 | E. Eval Coverage & Replay | **15 / 17** | 시나리오·fixture·결함 모듈·종료 경로 커버리지 |
 | F. Documentation Consistency | 10 / 10 | 문서의 주장이 구현과 일치하는가 |
-| G. Reproducibility & Automation | **4 / 8** | CI · 환경 고정 · Audit 자기 무결성 |
+| G. Reproducibility & Automation | 8 / 8 | CI · 환경 고정 · Audit 자기 무결성 |
 
-감점 두 건은 숨기지 않았습니다.
+남은 감점 한 건은 숨기지 않았습니다.
 
 - **E4b (-2)** — 종료 경로 7개 중 4개만 결정론적 Eval로 검증되어 있습니다. `TEST_DEFECT` · `UNKNOWN` 2회 · Reviewer `CHANGES_REQUESTED` 경로가 남았습니다.
-- **G1 (-4)** — 세 검증기를 모두 실행하는 CI 워크플로가 아직 없습니다.
 
-자기 저장소를 채점하는 도구가 자기에게 만점을 주면 그 점수는 아무 의미가 없습니다. 두 감점이 그대로 남아 있는 것이 이 Audit이 장식이 아니라는 증거입니다. 단위 테스트가 33개 check 전부에 **FAIL을 만들어내는 반증 사례**를 요구하는 것도 같은 이유입니다.
+자기 저장소를 채점하는 도구가 자기에게 만점을 주면 그 점수는 아무 의미가 없습니다. 이 감점이 그대로 남아 있는 것이 이 Audit이 장식이 아니라는 증거입니다. 단위 테스트가 33개 check 전부에 **FAIL을 만들어내는 반증 사례**를 요구하는 것도 같은 이유입니다.
 
 ### Critical Hard Gate — 점수와 별개인 판정
 
@@ -674,7 +675,7 @@ Timeline이 핵심입니다. `state.json`만으로는 전이를 그릴 수 없�
 
 호출되지 않은 Agent는 빈칸으로 두지 않습니다. EVAL-003의 Reviewer 미호출은 Harness가 멈춘 것이 아니라 `ENVIRONMENT_ERROR` 라우팅 규칙대로 부르지 않은 것이고, `eval-result.md`가 그 부재를 자동 검증 항목으로 판정해 두었습니다. 대시보드는 그 판정을 읽어 **"미호출 (자동 검증됨)"**으로 표시합니다.
 
-Overview 상단의 두 영역은 **의도적으로 분리**되어 있습니다. Audit의 94/100과 Eval의 147/147은 검사 대상이 다르므로 합산하지 않고, 하나를 다른 하나의 근거로 쓰지도 않습니다.
+Overview 상단의 두 영역은 **의도적으로 분리**되어 있습니다. Audit의 98/100과 Eval의 147/147은 검사 대상이 다르므로 합산하지 않고, 하나를 다른 하나의 근거로 쓰지도 않습니다.
 
 `dashboard/`는 Harness 영역도 수정 대상 영역도 아닌 **읽기 전용 소비자**입니다. `reports/examples/` 와 `reports/audit/latest.json` 을 읽기만 하고, `evals/eval_harness.py` 나 `evals/harness_audit.py` 를 import하지 않으며(같은 파일 계약을 독립 구현), Python 의존성을 추가하지 않습니다. 자세한 내용은 [`dashboard/README.md`](dashboard/README.md)에 있습니다.
 
@@ -746,15 +747,13 @@ patchpilot/
 
 ## 🔮 Future Work
 
-아직 구현하지 않은 항목입니다. 앞의 두 항목은 현재 Harness Audit이 실제로 감점하고 있는 지점과 같습니다.
+아직 구현하지 않은 항목입니다. 첫 항목은 현재 Harness Audit이 실제로 감점하고 있는 지점과 같습니다.
 
 **Eval 확장 — Audit check E4b (-2점)** — 현재 `PRODUCT_CODE_DEFECT` · `PLAN_DEFECT` · `ENVIRONMENT_ERROR` · `RETRY_BUDGET_EXCEEDED` 네 경로가 결정론적으로 검증되어 있습니다. 남은 경로는 다음과 같습니다.
 
 - `TEST_DEFECT` Eval — 테스트를 자동 수정하지 않고 즉시 `BLOCKED` 처리되는지
 - `UNKNOWN` Eval — 1회만 추가 시도하고 두 번째 `UNKNOWN`에서 종료되는지
 - Reviewer `CHANGES_REQUESTED` Eval — 테스트가 PASS인 상태에서 리뷰 지적으로 재수정 루프가 도는지
-
-**CI — Audit check G1 (-4점)** — 단위 테스트(`evals/tests`) · `eval_harness.py selftest` · `harness_audit.py` 세 검증기를 모두 실행하는 GitHub Actions 워크플로. 세 검증기는 담당이 겹치지 않습니다. 각각 Hook 판정 로직의 단위 검증, 판정 코드의 replay 회귀, 구조 계약의 정합성을 봅니다.
 
 **Eval 격리** — HARNESS-EVAL-003에서 드러난 한계입니다.
 
@@ -764,6 +763,8 @@ patchpilot/
 
 - `reports/<run-id>/` 쓰기 주체 강제 — 현재 "state.json과 report.md는 Orchestrator만 쓴다"는 규칙으로만 강제되고 도구 수준 차단은 없습니다
 - Docker 기반 Sandbox 실행 환경
+- CI 액션 런타임 갱신 — 첫 실행 Annotations에 Node.js 20 런타임 deprecation warning 2건이 남았습니다. job 실패는 아니며, 액션 상위 버전으로 올릴 때 함께 검증합니다
+- CI 러너 확장 — 현재 `ubuntu-latest` 하나라 Windows 경로 규칙 테스트 3건이 CI에서 skip됩니다. 두 플랫폼의 커버리지는 서로를 대체하지 않습니다
 - Audit rubric의 다음 버전 — 현재 33개 check는 전부 파일 존재·상수 일치·표 대조처럼 기계적으로 증명 가능한 사실만 봅니다. 산문 계약을 검사 대상으로 넓히려면 `rubric_version`을 올려야 하고, 그 시점부터 이전 점수와 직접 비교할 수 없습니다
 
 **측정 및 연동**
@@ -794,9 +795,9 @@ PatchPilot에서 중요하게 다룬 것은 AI가 코드를 얼마나 많이 생
 | **Fault Injection** | Agent의 실수를 기다리지 않고 결함을 주입해 실패 경로를 강제 실행. 재주입 전 이전 결함 제거 여부를 확인 |
 | **결정론적 Eval** | 4개 종료 경로를 결함 주입으로 강제 실행. 시나리오별 27~55개 항목 자동 판정 |
 | **구조 계약 감사** | 저장소가 선언한 통제 계약을 33개 이진 check로 채점. 점수와 별개로 Critical Hard Gate가 verdict를 결정 |
-| **감사 도구의 반증 가능성** | 33개 check 전부가 FAIL을 만들어내는 테스트를 가짐. 현재 자기 저장소 점수도 만점이 아닌 94/100 |
+| **감사 도구의 반증 가능성** | 33개 check 전부가 FAIL을 만들어내는 테스트를 가짐. 현재 자기 저장소 점수도 만점이 아닌 98/100 |
 | **자동 복구 검증** | teardown 후 `sample-project/`가 실행 전과 완전히 동일한지 확인 |
-| **재현 가능한 환경** | uv + `uv.lock`으로 의존성 버전 고정 |
+| **재현 가능한 환경** | uv + `uv.lock`으로 의존성 버전 고정. GitHub Actions가 `main` push · PR · 수동 실행에서 세 검증기와 Dashboard 빌드를 자동 실행 |
 
 가장 오래 고민한 부분은 **"검증되지 않은 경로를 어떻게 검증할 것인가"**였습니다. 재시도 루프를 설계해 두었지만 Agent가 실패하지 않아 한 번도 실행되지 않는 상황에서, 더 어려운 버그를 만드는 대신 결함을 주입하는 방향으로 전환한 것이 이 프로젝트의 핵심 결정이었습니다.
 
