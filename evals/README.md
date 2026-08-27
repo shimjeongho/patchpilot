@@ -903,7 +903,7 @@ teardown은 결함이 남아 있는 fixture 파일을 통째로 제거하고, �
 
 `assert` / `finish` 가 판정하는 항목이다. 하나라도 실패하면 eval은 FAIL이다.
 
-### 8-1. 재시도 후 성공하는 시나리오 공통 (`harness-eval-001` 기준 25항목 + teardown 3항목 = 28항목)
+### 8-1. 재시도 후 성공하는 시나리오 공통 (`harness-eval-001` 기준 25항목 + teardown 2항목 = 27항목)
 
 | 구분 | 항목 |
 | --- | --- |
@@ -922,10 +922,10 @@ teardown은 결함이 남아 있는 fixture 파일을 통째로 제거하고, �
 | 결함 제거 | 결함 표식이 사라지고 대상 파일 해시가 실제로 변경됨 |
 | 테스트 무결성 | fixture 테스트 함수가 하나도 사라지지 않고 `skip` 이 추가되지 않음 |
 | 범위 | eval 실행이 기존 추적 파일을 변경하지 않음 |
+| 복구 | teardown 후 설치한 eval fixture 가 전부 제거됨 |
 | 복구 | teardown 후 `sample-project/` 상태가 setup 시점 스냅샷과 동일 |
-| 복구 | teardown 후 전체 테스트 결과가 setup 시점 기준선(`57 passed`)과 동일 |
 
-### 8-2. `harness-eval-002` 추가 항목 (10항목, 총 35 + teardown 3 = 38항목)
+### 8-2. `harness-eval-002` 추가 항목 (10항목, 총 35 + teardown 2 = 37항목)
 
 | 구분 | 항목 |
 | --- | --- |
@@ -942,7 +942,7 @@ teardown은 결함이 남아 있는 fixture 파일을 통째로 제거하고, �
 
 `plan-1.md` / `plan-2.md` 는 `promote` 시 대표 결과에도 함께 복사된다.
 
-### 8-3. `harness-eval-003` 항목 (26항목 + teardown 3 = 29항목)
+### 8-3. `harness-eval-003` 항목 (26항목 + teardown 2 = 28항목)
 
 즉시 종료 시나리오는 §8-1의 "재시도 성공" 항목들(Developer 2차 / Tester 2차 / Reviewer /
 `final_status == SUCCESS`)을 쓰지 않는다. 판정 항목 전체는 다음과 같다.
@@ -977,8 +977,6 @@ teardown은 결함이 남아 있는 fixture 파일을 통째로 제거하고, �
 | 26 | 산출물 | `report.md` 에 BLOCKED 종료와 사유가 기록됨 |
 | 27 | 복구 | eval fixture 제거 (teardown) |
 | 28 | 복구 | teardown 후 `sample-project/` 상태가 setup 시점 스냅샷과 동일 |
-| 29 | 복구 | teardown 후 전체 테스트 결과가 setup 시점 기준선과 동일 |
-| 복구 | teardown 후 전체 테스트 결과가 setup 시점 기준선(`57 passed`)과 동일 |
 
 `plan-1.md` 는 `promote` 시 대표 결과에도 함께 복사된다. 이 시나리오의 승격 필수 목록에는
 `change-log-2.md` / `test-result-2.md` / `review.md` 가 들어가지 않는다. 존재하지 않는 것이

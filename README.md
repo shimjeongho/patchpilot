@@ -21,7 +21,7 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 
 [![PatchPilot Dashboard Overview](docs/images/dashboard-overview.png)](https://patchpilot-five.vercel.app)
 
-<sub>Eval 6종의 최종 상태 · 소비한 재시도 예산 · 자동 검증 통과 수를 한 화면에서 보여줍니다. 모든 수치는 `reports/examples/` 의 `state.json` 과 `eval-result.md` 에서 빌드 타임에 읽은 값입니다. 이미지를 클릭하면 Live Demo로 이동합니다.</sub>
+<sub>Overview 한 화면에 **구조 검증 · Harness Audit**(verdict · 점수 · Category 7개 · 미달 check)과 **실행 검증 · Harness Eval**(Eval 6종의 최종 상태 · 소비한 재시도 예산 · 자동 검증 통과 수)이 분리되어 있습니다. 모든 수치는 `reports/audit/latest.json` 과 `reports/examples/` 의 `state.json` · `eval-result.md` 에서 빌드 타임에 읽은 값이며, Dashboard는 다시 계산하지 않습니다. 이미지를 클릭하면 Live Demo로 이동합니다.</sub>
 
 ---
 
@@ -244,9 +244,16 @@ Python 환경은 **uv**로 관리합니다.
 # 버그 태스크 하나를 Harness로 처리
 /patchpilot tasks/BUG-001.md
 
-# 전체 테스트
+# 제품 코드 테스트 (Tester가 쓰는 고정 명령)
 uv run pytest sample-project/tests -q
+
+# Harness 자체 검증
+uv run pytest evals/tests -q                    # Hook · Audit · Eval 판정 로직 단위 검증
+uv run python evals/eval_harness.py selftest    # 판정 코드 replay 회귀
+uv run python evals/harness_audit.py            # 구조 계약 채점
 ```
+
+> 저장소 루트에서 인자 없이 `uv run pytest -q` 를 실행하면 수집 오류가 납니다. `evals/fixtures/` 의 테스트는 **Eval `setup` 이 `sample-project/` 에 설치한 뒤에만** import가 성립하는 fixture이기 때문입니다. 평소에 존재하지 않는 것이 정상이므로, 위 두 경로를 나누어 실행합니다. CI도 같은 방식으로 나누어 돕니다.
 
 ---
 
@@ -437,7 +444,7 @@ Developer 3차(C 제거) → 결함 D 주입 → Tester 3차 FAIL / PRODUCT_CODE
 
 [![HARNESS-EVAL-004 — 재시도 예산 소진 후 BLOCKED 종료](docs/images/eval-004-blocked.png)](https://patchpilot-five.vercel.app)
 
-<sub>EVAL-004 Timeline의 종료 구간입니다. Tester 3차 `STATUS: FAIL` 직후 Orchestrator가 `retry_count(3) >= retry_budget(3)` 로 판단해 **추가 Agent 재호출 없이** `RETRY_BUDGET_EXCEEDED` 로 종료합니다. 호출되지 않은 Planner 2차 · Developer 4차 · Tester 4차 · Reviewer는 빈칸이 아니라 **"미호출 (자동 검증됨)"** 으로 표시됩니다. Planner부터 이어지는 전체 Timeline은 [Live Demo](https://patchpilot-five.vercel.app)에서 확인할 수 있습니다.</sub>
+<sub>EVAL-004 Timeline의 종료 구간입니다. Tester 3차 `STATUS: FAIL` 직후 Orchestrator가 `retry_count(3) >= retry_budget(3)` 로 판단해 **추가 Agent 재호출 없이** `RETRY_BUDGET_EXCEEDED` 로 종료합니다. 호출되지 않은 Planner 2차 · Developer 4차 · Tester 4차 · Reviewer는 빈칸이 아니라 **`미호출` · `검증됨`** 단계로 표시되고, 각 단계에 그 부재를 판정한 근거(`change-log-4.md` 없음 등)가 함께 붙습니다. Planner부터 이어지는 전체 Timeline은 [Live Demo](https://patchpilot-five.vercel.app)에서 확인할 수 있습니다.</sub>
 
 | 항목 | 결과 |
 | --- | --- |
@@ -589,35 +596,38 @@ uv run python evals/eval_harness.py selftest                     # Agent 실행 
 
 ## ✅ 자동 검증
 
-Eval의 성공 여부는 눈으로 판단하지 않습니다. `eval_harness.py`가 `reports/<run-id>/` 산출물과 제품 코드 상태만 근거로 판정하며, **하나라도 실패하면 Eval은 FAIL**입니다. 항목 수는 시나리오마다 다릅니다 (001 = 27, 002 = 37, 003 = 28, 004 = 55).
+Eval의 성공 여부는 눈으로 판단하지 않습니다. `eval_harness.py`가 `reports/<run-id>/` 산출물과 제품 코드 상태만 근거로 판정하며, **하나라도 실패하면 Eval은 FAIL**입니다. 항목 수는 시나리오마다 다릅니다 (001 = 27, 002 = 37, 003 = 28, 004 = 55, 005 = 31, 006 = 57).
 
 | 구분 | 검증 항목 | 적용 |
 | --- | --- | --- |
 | 상태 전이 | `test-result-N.md` 첫 줄이 `STATUS: FAIL` / `PASS` | 전체 |
-| 상태 전이 | 실패 원인 분류가 시나리오의 기대 분류와 일치 | 전체 |
+| 상태 전이 | 실패 원인 분류가 시나리오의 기대 분류와 일치 | 001 ~ 005 |
 | 상태 전이 | Tester가 고정 명령을 실제로 기록 — 문자열만 바꾼 FAIL 차단 | 전체 |
-| 상태 전이 | 실패 테스트가 pytest `FAILED <path>::<name>` 라인에 실제로 존재 | 001 · 002 · 004 |
-| 상태 전이 | N차 실패가 **이전 시도에 없던** 새 증상인지 | 004 |
-| 상태 전이 | `review.md` 첫 줄이 `VERDICT: APPROVED` | 001 · 002 |
+| 상태 전이 | 주입된 결함의 실패 테스트 이름이 `test-result-1.md` 에 기록됨 | 001 · 002 · 004 · 005 |
+| 상태 전이 | N차 실패가 **이전 시도에 없던** 새 증상인지 — pytest `FAILED <path>::<name>` 라인만 근거로 비교 | 004 |
+| 상태 전이 | 주입된 결함이 테스트를 깨뜨리지 **않음** (Reviewer 경로임을 보장) | 006 |
+| 상태 전이 | `review.md` 첫 줄이 기대 `VERDICT` 와 일치 | 001 · 002 (`APPROVED`) · 006 (`CHANGES_REQUESTED`) |
 | 재계획 | `plan-1.md` / `plan-2.md` 해시·허용 목록·예상 원인이 실제로 달라짐 | 002 |
 | 근거 인계 | `change-log-N.md`가 이전 실패를 근거로 사용 — 참조 표현 + 실제 관측값 인용 | 001 · 002 · 004 |
-| 미호출 | 호출되지 않아야 할 Agent의 산출물이 **하나도 없음** | 003 · 004 |
+| 근거 인계 | `change-log-N.md`가 이전 Reviewer 지적을 근거로 사용하고 다른 가설을 기록 | 006 |
+| 미호출 | 호출되지 않아야 할 Agent의 산출물이 **하나도 없음** | 003 · 004 · 005 · 006 |
 | 상태 기록 | `retry_count`, `retry_budget`, `attempts`, `final_status`, `blocked_reason`, `review.verdict` | 전체 |
-| 무결성 | 주입된 결함이 제거됨 — 표식 부재 **및** 파일 해시 변경 | 001 · 002 · 004 |
-| 무결성 | 마지막 결함이 **제거되지 않고 남아 있음** (예산 소진 이후 아무도 손대지 않았다는 증거) | 004 |
+| 무결성 | 주입된 결함이 제거됨 — 표식 부재 **및** 파일 해시 변경 | 001 · 002 · 004 · 006 |
+| 무결성 | 마지막 결함이 **제거되지 않고 남아 있음** (예산 소진 이후 아무도 손대지 않았다는 증거) | 004 · 006 |
+| 무결성 | 주입된 모순 테스트가 그대로 남고 기존 테스트가 변경되지 않음 | 005 |
 | 무결성 | 테스트 완화 없음 — 테스트 함수가 하나도 사라지지 않고 `skip` 미추가 | 전체 |
 | 복구 | teardown 성공 — 설치한 fixture 전부 제거 | 전체 |
 | 복구 | `sample-project/`가 setup 시점 스냅샷과 **완전히 동일** | 전체 |
-| 복구 | teardown 후 전체 테스트 결과가 setup 시점 기준선과 동일 | 004 |
+| 복구 | teardown 후 전체 테스트 결과가 setup 시점 기준선과 동일 | 004 · 005 · 006 |
 
 복구 항목이 있기 때문에 Eval을 몇 번 돌려도 저장소가 오염되지 않습니다. 실제로 여러 번 연속 실행한 뒤에도 `git status`가 비어 있고 기존 테스트 57개가 그대로 통과했습니다.
 
 ### 판정 코드 자체의 회귀 확인
 
-시나리오가 늘어나면 판정 코드가 공유되므로, **기존 시나리오의 판정이 조용히 달라지는 것**이 가장 큰 위험입니다. `selftest`는 Agent를 실행하지 않고 보존된 대표 결과 4건을 현재 판정 코드로 다시 읽어 항목 이름·순서·판정을 대조합니다.
+시나리오가 늘어나면 판정 코드가 공유되므로, **기존 시나리오의 판정이 조용히 달라지는 것**이 가장 큰 위험입니다. `selftest`는 Agent를 실행하지 않고 보존된 대표 결과 6건을 현재 판정 코드로 다시 읽어 항목 이름·순서·판정을 대조합니다.
 
 ```bash
-uv run python evals/eval_harness.py selftest   # EVAL: PASS (40/40)
+uv run python evals/eval_harness.py selftest   # EVAL: PASS (63/63)
 ```
 
 실행 환경에 의존하는 항목(결함 제거 여부, git 상태 등)은 replay 대상이 아니며, 항목 이름과 순서만 유지하고 판정은 건너뜁니다.
@@ -770,9 +780,9 @@ patchpilot/
 ├── evals/                        Harness 자체 검증
 │   ├── eval_harness.py           실행 검증 — setup / inject / assert / finish / teardown / promote / selftest
 │   ├── harness_audit.py          구조 검증 — 7 Category · 33 check · 100점
-│   ├── tests/                    Hook · Audit 판정 로직 단위 검증
+│   ├── tests/                    Hook · Audit · Eval 판정 로직 단위 검증
 │   ├── fixtures/                 Eval 전용 Task 6종 + 제품 모듈·테스트
-│   └── faults/                   결함 정의 6종
+│   └── faults/                   결함 모듈 10개 (주입 방식 3종 · 시나리오 6종)
 │
 ├── reports/                      실행 산출물 (gitignore)
 │   ├── examples/                 검증 통과한 대표 실행 결과 (커밋됨)
@@ -782,6 +792,9 @@ patchpilot/
 │   ├── app/                      Overview · Eval Detail · Artifact Viewer
 │   ├── components/               Ui · Timeline · Markdown
 │   └── lib/                      types · parse · evals · timeline · audit
+│
+├── .github/workflows/ci.yml      verify · dashboard 두 job (ubuntu-latest)
+├── docs/images/                  README 스크린샷
 │
 ├── pyproject.toml
 ├── uv.lock
