@@ -1,0 +1,63 @@
+{
+  "run_id": "RUN-20260827-1219-HARNESS-EVAL-006",
+  "task": "evals/fixtures/HARNESS-EVAL-006.md",
+  "session_id": "a80cbc0e-88b9-48a8-82f9-cfcbdeb26855",
+  "status": "BLOCKED",
+  "current_stage": "DONE",
+  "retry_count": 3,
+  "retry_budget": 3,
+  "unknown_retry_used": false,
+  "started_at": "2026-08-27T12:19",
+  "finished_at": "2026-08-27T12:41",
+  "start_commit": "235ca4619e2a711a63ea32d8b819754d5d2eec6f",
+  "start_dirty_files": [
+    " M dashboard/app/evals/[evalId]/page.tsx",
+    " M evals/README.md",
+    " M evals/eval_harness.py",
+    " M evals/tests/test_harness_audit.py",
+    "?? evals/faults/review_budget_001.py",
+    "?? evals/faults/review_budget_002.py",
+    "?? evals/faults/review_budget_003.py",
+    "?? evals/faults/test_defect_001.py",
+    "?? evals/fixtures/HARNESS-EVAL-005.md",
+    "?? evals/fixtures/HARNESS-EVAL-006.md",
+    "?? evals/fixtures/coupon.py",
+    "?? evals/fixtures/refund.py",
+    "?? evals/fixtures/test_coupon.py",
+    "?? evals/fixtures/test_refund.py",
+    "?? evals/tests/test_eval_scenarios.py",
+    "?? evals/tests/test_review_exhausted_scenario.py",
+    "?? reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/",
+    "?? sample-project/src/expense/refund.py",
+    "?? sample-project/tests/test_refund.py"
+  ],
+  "attempts": [
+    {
+      "n": 1,
+      "change_log": "change-log-1.md",
+      "test_result": "test-result-1.md",
+      "status": "PASS",
+      "failure_category": null
+    },
+    {
+      "n": 2,
+      "change_log": "change-log-2.md",
+      "test_result": "test-result-2.md",
+      "status": "PASS",
+      "failure_category": null
+    },
+    {
+      "n": 3,
+      "change_log": "change-log-3.md",
+      "test_result": "test-result-3.md",
+      "status": "PASS",
+      "failure_category": null
+    }
+  ],
+  "review": {
+    "verdict": "CHANGES_REQUESTED",
+    "file": "review.md"
+  },
+  "final_status": "BLOCKED",
+  "blocked_reason": "REVIEW_CHANGES_REQUESTED_NO_BUDGET"
+}

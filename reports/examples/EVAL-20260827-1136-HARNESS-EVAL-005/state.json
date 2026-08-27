@@ -1,0 +1,38 @@
+{
+  "run_id": "RUN-20260827-1136-HARNESS-EVAL-005",
+  "task": "evals/fixtures/HARNESS-EVAL-005.md",
+  "session_id": "a80cbc0e-88b9-48a8-82f9-cfcbdeb26855",
+  "status": "BLOCKED",
+  "current_stage": "DONE",
+  "retry_count": 0,
+  "retry_budget": 3,
+  "unknown_retry_used": false,
+  "started_at": "2026-08-27T11:36",
+  "finished_at": "2026-08-27T11:47",
+  "start_commit": "235ca4619e2a711a63ea32d8b819754d5d2eec6f",
+  "start_dirty_files": [
+    " M evals/eval_harness.py",
+    "?? evals/faults/test_defect_001.py",
+    "?? evals/fixtures/HARNESS-EVAL-005.md",
+    "?? evals/fixtures/coupon.py",
+    "?? evals/fixtures/test_coupon.py",
+    "?? evals/tests/test_eval_scenarios.py",
+    "?? sample-project/src/expense/coupon.py",
+    "?? sample-project/tests/test_coupon.py"
+  ],
+  "attempts": [
+    {
+      "n": 1,
+      "change_log": "change-log-1.md",
+      "test_result": "test-result-1.md",
+      "status": "FAIL",
+      "failure_category": "TEST_DEFECT"
+    }
+  ],
+  "review": {
+    "verdict": null,
+    "file": null
+  },
+  "final_status": "BLOCKED",
+  "blocked_reason": "TEST_DEFECT_NEEDS_HUMAN"
+}

@@ -734,40 +734,56 @@ def test_missing_file_is_a_check_failure_not_an_execution_error(harness_audit, a
 # ---------------------------------------------------------------------------
 
 
-def test_preserved_examples_have_no_session_id(repo_root: Path):
-    """대표 결과는 Stop Gate 도입 전에 승격되었으므로 `session_id` 키가 없다.
+def test_preserved_examples_mix_session_id_presence(repo_root: Path):
+    """대표 결과에는 `session_id` 가 있는 것과 없는 것이 **섞여 있다.**
 
-    이 사실이 깨지면 아래 회귀 테스트의 전제가 사라진다. 먼저 사실을 고정한다.
+    Stop Gate 도입 전에 승격된 결과에는 키가 아예 없고, 그 뒤에 승격된 결과에는
+    `patchpilot.md §1-5` 대로 값이 들어 있다. 둘 다 정상이다.
+
+    이 사실을 고정해 두는 이유는 아래 회귀 테스트가 검증하는 것이 "키가 없다" 가 아니라
+    **"있든 없든 Audit 판정이 같다"** 임을 분명히 하기 위해서다. 한쪽만 남게 되면
+    실제 증거로 양쪽을 확인할 수 없게 되므로 그때 이 전제를 다시 점검해야 한다.
     """
     examples = sorted((repo_root / "reports" / "examples").iterdir())
     assert examples
+
+    with_id = []
+    without_id = []
     for example in examples:
         state = json.loads((example / "state.json").read_text(encoding="utf-8"))
-        assert "session_id" not in state, example.name
+        (with_id if "session_id" in state else without_id).append(example.name)
+
+    assert without_id, "session_id 가 없는 대표 결과가 하나도 없습니다"
+    assert with_id, "session_id 가 있는 대표 결과가 하나도 없습니다"
 
 
-def test_absent_session_id_fails_no_check(harness_audit, audit_repo):
-    """승격 이후 도입된 필드를 옛 증거에 요구하지 않는다.
+def test_session_id_presence_changes_no_check(harness_audit, audit_repo):
+    """`session_id` 는 Audit 의 어떤 판정에도 들어가서는 안 된다.
 
-    현재 계약을 소급 적용하면 정상 저장소에 첫 실행부터 Critical 이 4건 뜬다.
-    `session_id` 는 Audit 의 어떤 판정에도 들어가서는 안 된다.
+    승격 이후 도입된 필드를 옛 증거에 요구하면 정상 저장소에 첫 실행부터 Critical 이 4건
+    뜬다. 반대로 새 증거에 그 필드가 생겼다고 판정이 달라져도 안 된다.
+
+    그래서 실제 저장소의 상태에 기대지 않고 **양방향으로** 확인한다. 전부 제거한 저장소와
+    전부 채운 저장소가 같은 JSON 을 내야 한다.
     """
     base = audit_repo / "reports" / "examples"
-    for example in sorted(base.iterdir()):
-        state = json.loads((example / "state.json").read_text(encoding="utf-8"))
-        assert "session_id" not in state
 
+    def rewrite(mutate) -> None:
+        for example in sorted(base.iterdir()):
+            relative = "reports/examples/{0}/state.json".format(example.name)
+            state = load_json(audit_repo, relative)
+            mutate(state)
+            dump_json(audit_repo, relative, state)
+
+    rewrite(lambda state: state.pop("session_id", None))
     report = harness_audit.run_audit(audit_repo)
     for check_id in ("D1", "D2", "D3", "D4", "D5"):
         assert check_of(report, check_id)["result"] == "PASS", check_id
 
-    # 값이 생겨도 판정이 달라지면 안 된다. 검사 대상이 아니기 때문이다.
     before = harness_audit.to_json(report)
-    for example in sorted(base.iterdir()):
-        relative = "reports/examples/{0}/state.json".format(example.name)
-        state = load_json(audit_repo, relative)
-        state["session_id"] = "0000-session"
-        dump_json(audit_repo, relative, state)
+
+    # 값이 생겨도 판정이 달라지면 안 된다. 검사 대상이 아니기 때문이다.
+    rewrite(lambda state: state.update({"session_id": "0000-session"}))
     assert harness_audit.to_json(harness_audit.run_audit(audit_repo)) == before
 
 

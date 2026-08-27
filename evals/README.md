@@ -15,7 +15,7 @@ Eval은 결함을 의도적으로 주입해 그 경로를 **매번 같은 방식
 
 ## 1. 검증 대상 전이
 
-시나리오는 네 개다. `--scenario` 를 생략하면 `harness-eval-001` 이 실행된다.
+시나리오는 여섯 개다. `--scenario` 를 생략하면 `harness-eval-001` 이 실행된다.
 
 ### `harness-eval-001` — PRODUCT_CODE_DEFECT 재시도 루프
 
@@ -91,7 +91,81 @@ Planner
 "예산을 **다 쓰면** 멈추는가" 를 본다. 재시도 루프가 도는 것과 제때 멈추는 것은 다른 성질이며,
 후자는 지금까지 어떤 실행에서도 도달한 적이 없는 경로다.
 
-네 전이 모두 눈으로 확인하지 않는다. `eval_harness.py` 의 `assert` 가 `reports/<run-id>/` 산출물과
+### `harness-eval-005` — TEST_DEFECT_NEEDS_HUMAN 즉시 종료 라우팅
+
+```text
+Planner
+  -> Developer 1차            (버그 수정, 계획 범위 안)
+  -> Fault Injection          (기존 테스트와 모순되는 테스트 하나를 추가)
+  -> Tester FAIL
+  -> TEST_DEFECT
+  -> retry_count = 0          (재시도 예산을 소비하지 않는다)
+  -> 테스트를 자동으로 고치지 않는다
+  -> Planner 2차 / Developer 2차 / Tester 2차 / Reviewer 미호출
+  -> BLOCKED                  (blocked_reason = TEST_DEFECT_NEEDS_HUMAN)
+```
+
+`harness-eval-003` 과 같은 즉시 종료 경로지만 성질이 다르다. 실행 환경 오류는 **테스트를 한 건도
+실행할 수 없는** 상태이고, 이 시나리오는 테스트가 전부 정상 실행되는데도 **어떤 제품 코드로도
+전부 통과시킬 수 없는** 상태다.
+
+모순은 두 테스트가 같은 입력에 서로 다른 정확한 반환값을 요구하게 만들어 구성한다.
+
+```python
+# 설치된 fixture 안에 원래 있던 테스트
+assert apply_coupon(1000, 3) == [334, 333, 333]
+
+# 결함 주입이 덧붙인 테스트
+assert apply_coupon(1000, 3) == [333, 333, 334]
+```
+
+index 0 이 334 이면서 동시에 333 일 수는 없다. Developer를 몇 번 다시 불러도, 계획 범위를
+넓혀도 풀리지 않는다. `CLAUDE.md §20` 은 이 경우 자동으로 테스트를 고치는 것을 금지하므로
+Harness 안에서는 해소되지 않고 사람의 판단으로 넘어간다. 이 eval이 검증하는 것은 **Harness가
+막혔을 때 막혔다고 보고하는가** 다.
+
+실행 절차는 §14에 있다. 앞선 네 시나리오와 떨어져 있는 이유는 §3~§12의 절 번호를 다른 파일이
+계약 참조로 쓰고 있어(`harness_audit.py` 의 CheckSpec — D4 가 §4-12, E3 가 §8, E2 가 §10,
+E5 가 §11, E1 이 §12, E6 가 §3-12), 중간에 끼워 넣으면 그 참조가 전부 어긋나기 때문이다.
+시나리오를 더 추가할 때도 같은 이유로 문서 끝에 §16, §17 순서로 덧붙인다.
+
+### `harness-eval-006` — REVIEW_CHANGES_REQUESTED_NO_BUDGET Reviewer 예산 소진
+
+```text
+Planner
+  -> Developer 1차            (버그 수정)
+  -> Fault Injection          (결함 B, 계획 범위 안 / 테스트 중립)
+  -> Tester PASS
+  -> Reviewer CHANGES_REQUESTED
+  -> retry_count = 1
+  -> Developer 2차            (결함 B 제거)
+  -> Fault Injection          (결함 C, B 제거 확인 후)
+  -> Tester PASS
+  -> Reviewer CHANGES_REQUESTED
+  -> retry_count = 2
+  -> Developer 3차            (결함 C 제거)
+  -> Fault Injection          (결함 D, C 제거 확인 후)
+  -> Tester PASS
+  -> Reviewer CHANGES_REQUESTED
+  -> retry_count = 3 = retry_budget
+  -> Developer 4차 / Tester 4차 미호출
+  -> BLOCKED                  (blocked_reason = REVIEW_CHANGES_REQUESTED_NO_BUDGET)
+```
+
+`harness-eval-004` 와 종료 형태가 닮았지만 **예산을 소비한 주체가 다르다.** 그쪽은 Tester가
+매번 실패해서 예산이 마르고, 이쪽은 **Tester가 매번 통과하는데도** Reviewer 판정만으로 마른다.
+
+그래서 주입되는 결함은 반환값과 예외 동작을 한 글자도 바꾸지 않는다. 바꾸는 것은 코드 품질뿐이다.
+
+| 회차 | 주입 결함 | 어기는 규칙 |
+| --- | --- | --- |
+| 1 | 디버깅용 `print()` 잔존 | `CLAUDE.md §9` |
+| 2 | 호출되지 않는 죽은 helper 잔존 | `CLAUDE.md §9`, `§17` |
+| 3 | `except Exception: pass` 로 오류를 삼킴 | `CLAUDE.md §8` |
+
+세 규칙이 서로 다른 이유는 §3-17에 있다. 실행 절차는 §15에 있다.
+
+여섯 전이 모두 눈으로 확인하지 않는다. `eval_harness.py` 의 `assert` 가 `reports/<run-id>/` 산출물과
 제품 코드 상태만 근거로 자동 판정한다.
 
 ---
@@ -116,14 +190,24 @@ evals/
 │   ├── settlement_runtime.json     # 삭제 대상이 되는 런타임 리소스 (설치 대상)
 │   ├── HARNESS-EVAL-004.md         # eval 전용 고정 Task (RETRY_BUDGET_EXCEEDED)
 │   ├── installment.py              # 결함이 있는 제품 코드 (설치 대상)
-│   └── test_installment.py         # 위 결함과 요구사항을 잡는 테스트 (설치 대상)
+│   ├── test_installment.py         # 위 결함과 요구사항을 잡는 테스트 (설치 대상)
+│   ├── HARNESS-EVAL-005.md         # eval 전용 고정 Task (TEST_DEFECT)
+│   ├── coupon.py                   # 결함이 있는 제품 코드 (설치 대상)
+│   ├── test_coupon.py              # 모순 테스트가 주입될 테스트 (설치 대상)
+│   ├── HARNESS-EVAL-006.md         # eval 전용 고정 Task (REVIEW_CHANGES_REQUESTED_NO_BUDGET)
+│   ├── refund.py                   # 결함이 있는 제품 코드 (설치 대상)
+│   └── test_refund.py              # 반환값 계약 테스트 (설치 대상)
 └── faults/
     ├── retry_001.py                # 재시도 루프 검증용 결함 정의 (계획 범위 안)
     ├── plan_defect_001.py          # 재계획 라우팅 검증용 결함 정의 (계획 범위 밖)
     ├── env_error_001.py            # 즉시 종료 라우팅 검증용 결함 정의 (리소스 삭제)
     ├── retry_budget_001.py         # 예산 소진 검증용 1차 결함 (앞 회차 우선 배분 위반)
     ├── retry_budget_002.py         # 예산 소진 검증용 2차 결함 (회차 간 차이 1원 위반)
-    └── retry_budget_003.py         # 예산 소진 검증용 3차 결함 (총액 보존 위반)
+    ├── retry_budget_003.py         # 예산 소진 검증용 3차 결함 (총액 보존 위반)
+    ├── test_defect_001.py          # 사람 판단 필요 라우팅 검증용 결함 정의 (모순 테스트 추가)
+    ├── review_budget_001.py        # Reviewer 예산 소진 검증용 1차 결함 (디버깅용 print 잔존)
+    ├── review_budget_002.py        # Reviewer 예산 소진 검증용 2차 결함 (죽은 코드 잔존)
+    └── review_budget_003.py        # Reviewer 예산 소진 검증용 3차 결함 (오류 무시)
 ```
 
 시나리오별 설치 대상은 다음과 같다. eval 실행 중에만 설치되고 teardown에서 제거된다.
@@ -161,9 +245,27 @@ evals/
 | `fixtures/installment.py` | `sample-project/src/expense/installment.py` |
 | `fixtures/test_installment.py` | `sample-project/tests/test_installment.py` |
 
+`harness-eval-005`
+
+| fixture | 설치 경로 |
+| --- | --- |
+| `fixtures/coupon.py` | `sample-project/src/expense/coupon.py` |
+| `fixtures/test_coupon.py` | `sample-project/tests/test_coupon.py` |
+
+`harness-eval-006`
+
+| fixture | 설치 경로 |
+| --- | --- |
+| `fixtures/refund.py` | `sample-project/src/expense/refund.py` |
+| `fixtures/test_refund.py` | `sample-project/tests/test_refund.py` |
+
 `harness-eval-004` 는 앞의 세 시나리오와 설치 경로가 겹치지 않는 전용 모듈을 쓴다. 결함 세 개가
 각각 **다른 요구사항** 을 깨뜨려야 하므로, 그 요구사항 분리를 fixture 설계 단계에서 보장해야
 하기 때문이다.
+
+`harness-eval-005` 도 전용 모듈을 쓴다. 결함 주입이 **테스트 파일 자체** 를 대상으로 하므로,
+설치 경로를 다른 시나리오와 공유하면 주입 대상이 어느 시나리오의 것인지 기계적으로 구분할 수
+없기 때문이다.
 
 `harness-eval-003` 은 제품 버그와 그 테스트를 `harness-eval-001` 과 공유한다. 이 시나리오가
 바꾸는 변수는 제품 버그가 아니라 결함의 종류 하나이기 때문이다. 시나리오는 동시에 실행되지
@@ -373,6 +475,61 @@ Developer가 직전 결함을 남겨두면 다음 결함이 주입되지 않고 
 
 `harness-eval-003` 의 "삭제된 리소스가 복구되지 않음" 과 같은 논법이다.
 결함은 teardown이 fixture 파일과 함께 통째로 제거한다.
+
+### 3-15. 테스트에 주입하되 기존 테스트는 건드리지 않는다
+
+`test_defect_001` 은 유일하게 **테스트 파일** 을 주입 대상으로 삼는다. `CLAUDE.md §3-3` 이
+금지하는 테스트 약화를 결함 주입 스스로가 저지르면, 검증 대상 상황이 아니라 Harness가 규칙을
+어긴 상황이 되므로 주입은 **덧붙이기만** 한다.
+
+이 전제는 선언으로 두지 않고 양쪽에서 기계로 강제한다.
+
+* **주입 전** — 대상이 이번 eval이 설치한 `sample-project/tests/` 안의 untracked 파일이고,
+  내용이 설치 원본 fixture와 **완전히 같을** 때만 주입한다. 이미 누가 손댄 파일이라면
+  "기존 테스트를 그대로 두고 하나만 추가했다" 가 성립하지 않으므로 주입하지 않고 실패시킨다.
+* **주입 후** — 판정은 표식 존재 여부가 아니라 **설치 원본 fixture + 주입 코드** 와의 완전
+  비교다. 표식만 보면 "주입된 테스트는 남겨 두고 기존 테스트를 고친" 경우를 놓친다.
+  완전 비교는 삭제·assertion 변경·skip 추가·rename 을 한 번에 배제한다.
+
+### 3-16. TEST_DEFECT 분류를 프롬프트로 알려주지 않는다
+
+Tester에게 "이것은 테스트 결함이다" 라고 알려주면 검증 대상이 사라진다. Tester가 실제로 받는
+것은 고정 실행 명령과 산출물 경로뿐이고, 분류는 `tester.md` 의 기준으로 스스로 내린다.
+
+그래서 모순은 **기계적으로 관측 가능한 형태** 로 만든다. 같은 입력에 대한 두 개의 정확한
+반환값 요구는 코드를 읽으면 양립 불가능하다는 것이 드러나고, 판단에 추측이 필요 없다.
+
+### 3-17. Reviewer 경로의 결함은 계획 범위 **안** 에 둔다
+
+`harness-eval-006` 을 설계할 때 처음 떠오르는 구성은 "계획 허용 목록 **밖** 파일에 결함을 두고,
+Developer가 지우려 하면 `guard_plan_scope.py` 가 막는다" 였다. 이 구성은 성립하지 않는다.
+
+Developer가 범위 밖 수정이 필요하다고 판단하면 `developer.md §3` 에 따라 수정하지 않고 그
+사유만 change-log에 적고 중단한다. 그러면 `patchpilot.md §3` 이 그 상태를 그대로 집어낸다.
+
+> change-log의 "범위 밖 수정 필요 여부" 에 수정이 필요하다고 적혀 있고 실제 코드 변경이 없다
+> → `BLOCKED` (사유: `SCOPE_OUT_OF_PLAN`)
+
+즉 `retry_count = 1` 시점에 **다른 종료 경로** 로 끝난다. `REVIEW_CHANGES_REQUESTED_NO_BUDGET`
+에는 도달할 수 없다.
+
+그래서 결함을 계획 허용 목록 **안** 에 둔다. Developer가 매 회차 실제로 제거할 수 있어야
+Developer → Tester → Reviewer 루프가 3회 돌고 예산이 Reviewer 지적으로만 소진된다.
+이 전제는 각 결함의 `precheck` 가 `plan.md` 를 읽어 직접 검사하며, 어긋나면 주입하지 않는다.
+
+### 3-18. Reviewer에게 기대 판정을 알려주지 않는다
+
+Tester에게 실패 분류를 알려주지 않는 것과 같은 이유다(§3-16). Reviewer가 받는 것은 run-id,
+task 경로, 필수 입력 경로, `git diff` 를 직접 확인하라는 지시, 그리고 실행 시작 시점의
+`start_commit` / `start_dirty_files` 뿐이다. 이것은 `patchpilot.md §7` 이 정한 프롬프트
+구성 그대로이며 eval 전용 항목이 하나도 없다.
+
+판정의 결정론성은 프롬프트가 아니라 **상황** 에서 나온다. 세 결함은 각각 `CLAUDE.md` 가
+금지 예시나 완료 확인 항목으로 **문서에 그대로 적어 둔** 위반이다. 특히 3차 결함
+(`except Exception: pass`)은 `CLAUDE.md §8` 이 금지 예시로 같은 형태를 인용하고 있다.
+
+회차마다 다른 규칙을 어기게 만든 이유도 여기에 있다. 같은 지적이 세 번 반복되면 Reviewer가
+그 회차의 코드를 실제로 다시 검토한 것인지, 직전 판정을 되풀이한 것인지 구분할 수 없다.
 
 ---
 
@@ -737,6 +894,9 @@ uv run python evals/eval_harness.py finish --run-id <run-id>
 teardown은 결함이 남아 있는 fixture 파일을 통째로 제거하고, 전체 테스트 결과가 setup 시점
 기준선으로 돌아왔는지까지 확인한다.
 
+> `harness-eval-005` (TEST_DEFECT) 의 실행 절차는 §14,
+> `harness-eval-006` (REVIEW_CHANGES_REQUESTED_NO_BUDGET) 의 실행 절차는 §15에 있다.
+
 ---
 
 ## 8. 자동 검증 항목
@@ -894,6 +1054,91 @@ teardown은 결함이 남아 있는 fixture 파일을 통째로 제거하고, �
 
 ---
 
+### 8-5. `harness-eval-005` 항목 (28항목 + teardown 3 = 31항목)
+
+`harness-eval-003` 과 같은 즉시 종료 골격이며, 다른 것은 세 가지다.
+예산이 온전히 남았는지(15·16·17), 무엇이 남아 있어야 하는지(24), 실패 증상이 무엇인지(8).
+
+| # | 구분 | 항목 |
+| --- | --- | --- |
+| 1 | 산출물 | `plan.md` 존재 |
+| 2 | 산출물 | `plan-1.md` 스냅샷 존재 |
+| 3 | 산출물 | `change-log-1.md` 존재 |
+| 4 | 결함 주입 | `fault-injection.md` 존재 |
+| 5 | 결함 주입 | 주입이 Developer 1차 이후에 이루어짐 |
+| 6 | Tester 1차 | 첫 줄이 `STATUS: FAIL` |
+| 7 | Tester 1차 | 고정 실행 명령 `uv run pytest sample-project/tests -q` 기록 |
+| 8 | Tester 1차 | 주입된 결함의 실패 테스트(`..._gives_remainder_to_the_last_item`) 기록 |
+| 9 | 라우팅 | 실패 원인 분류가 `TEST_DEFECT` |
+| 10 | 미호출 | Planner 2차가 호출되지 않음 (`plan.md` 해시가 `plan-1.md` 와 동일) |
+| 11 | 미호출 | Developer 2차가 호출되지 않음 (`change-log-2.md` 없음) |
+| 12 | 미호출 | Tester 2차가 호출되지 않음 (`test-result-2.md` 없음) |
+| 13 | 미호출 | Reviewer가 호출되지 않음 (`review.md` 없음) |
+| 14 | 상태 | `state.json` 존재 |
+| 15 | 상태 | `retry_count == 0` (재시도 예산 미소비) |
+| 16 | 상태 | `retry_budget == 3` (예산이 있었는데도 쓰지 않았다) |
+| 17 | 상태 | `unknown_retry_used == false` |
+| 18 | 상태 | `final_status == BLOCKED` |
+| 19 | 상태 | `current_stage == DONE` |
+| 20 | 상태 | `blocked_reason == TEST_DEFECT_NEEDS_HUMAN` |
+| 21 | 상태 | `attempts` 1건 |
+| 22 | 상태 | `attempts[0]` 이 FAIL / `TEST_DEFECT` |
+| 23 | 상태 | `review.verdict` 없음 |
+| 24 | 무결성 | 주입된 모순 테스트가 그대로 남아 있고 기존 테스트가 변경되지 않음 |
+| 25 | 무결성 | eval 테스트가 약화되지 않음 |
+| 26 | 범위 | 기존 추적 파일이 변경되지 않음 |
+| 27 | 산출물 | `report.md` 존재 |
+| 28 | 산출물 | `report.md` 에 BLOCKED 종료와 사유가 기록됨 |
+| 29 | 복구 | eval fixture 제거 (teardown) |
+| 30 | 복구 | teardown 후 `sample-project/` 상태가 setup 시점 스냅샷과 동일 |
+| 31 | 복구 | teardown 후 전체 테스트 결과가 setup 시점 기준선(`57 passed`)과 동일 |
+
+15·16·17 을 함께 두는 이유는, 예산 미소비가 "예산이 없어서 못 썼다" 와 구별되어야 하기
+때문이다. 예산이 3으로 남아 있고 `UNKNOWN` 재시도도 쓰이지 않았을 때만 "예산 판정을 지나가지
+않고 끝났다" 가 성립한다.
+
+24는 표식 존재 여부가 아니라 설치 원본 fixture와의 완전 비교다. (§3-15)
+
+### 8-6. `harness-eval-006` 항목 (54항목 + teardown 3 = 57항목)
+
+시도 1~3에 대해 같은 항목 묶음이 반복된다. `harness-eval-004` 와 다른 곳만 굵게 적는다.
+
+| # | 구분 | 항목 |
+| --- | --- | --- |
+| 1 | 산출물 | `plan.md` 존재 |
+| 2 | 산출물 | `plan-1.md` 스냅샷 존재 |
+| 3~9 | 시도 1 | `change-log-1.md` 존재 / `fault-injection-1.md` 존재 / 주입이 Developer 1차 이후 / **주입 결함이 `review_budget_001`** / **`test-result-1.md` 첫 줄이 `STATUS: PASS`** / 고정 실행 명령 기록 / **주입 결함이 테스트를 깨뜨리지 않음** |
+| 10~20 | 시도 2 | 위 7항목 + **`change-log-2.md` 가 Reviewer 지적을 재수정 근거로 사용** / 이전 시도와 다른 가설 / Developer 2차가 1차 결함 제거 / **2차 주입 결함이 이전 시도와 다름** |
+| 21~31 | 시도 3 | 시도 2와 동일 구성 |
+| 32 | 예산 | **재시도 예산을 소비한 주체가 Reviewer 임** |
+| 33 | Reviewer | **`review.md` 첫 줄이 `VERDICT: CHANGES_REQUESTED`** |
+| 34 | 미호출 | Planner 2차가 호출되지 않음 |
+| 35~37 | 미호출 | Developer 4차 / Tester 4차 / 4차 결함 주입 없음 |
+| 38 | 상태 | `state.json` 존재 |
+| 39~44 | 상태 | `retry_count == 3` / `retry_budget == 3` / **`unknown_retry_used == false`** / `final_status == BLOCKED` / `current_stage == DONE` / **`blocked_reason == REVIEW_CHANGES_REQUESTED_NO_BUDGET`** |
+| 45 | 상태 | `attempts` 3건 |
+| 46~48 | 상태 | **`attempts[0..2]` 이 각각 PASS / 실패 원인 분류 없음** |
+| 49 | 상태 | **`review.verdict == CHANGES_REQUESTED`** |
+| 50 | 무결성 | 마지막 주입 결함이 제거되지 않고 남아 있음 |
+| 51 | 무결성 | eval 테스트가 약화되지 않음 |
+| 52 | 범위 | 기존 추적 파일이 변경되지 않음 |
+| 53~54 | 산출물 | `report.md` 존재 / `report.md` 에 BLOCKED 종료와 사유가 기록됨 |
+| 55~57 | 복구 | teardown 3항목 (기준선 `57 passed` 복귀 포함) |
+
+32번이 이 시나리오의 핵심 주장이다. 판정 근거는 연역이며, 그 연역이 성립하는 이유는 다음과 같다.
+
+`CLAUDE.md §16` 이 정한 예산 소비 항목은 네 가지다. `PRODUCT_CODE_DEFECT`, `PLAN_DEFECT`,
+`UNKNOWN`, 그리고 Reviewer의 `CHANGES_REQUESTED`. 앞의 셋은 **Tester가 `STATUS: FAIL` 을 내야만**
+발생한다(`CLAUDE.md §14`). 시도 3회가 모두 `STATUS: PASS` 이고 `attempts` 세 건 모두
+`failure_category` 가 비어 있으면 앞의 셋은 성립할 수 없다. `unknown_retry_used == false` 가
+`UNKNOWN` 경로를 한 번 더 좁힌다. 남는 것은 Reviewer의 `CHANGES_REQUESTED` 뿐이고,
+`retry_count == 3` 이므로 정확히 3회 발생했다.
+
+`review.md` 는 회차마다 덮어써지므로 최종 판정 하나만 남는다. 1차와 2차 판정이 실재했다는
+증거는 `fault-injection-2.md` / `fault-injection-3.md` 에 있다. 다음 결함을 주입하기 전에
+Harness가 그 시점의 `review.md` 첫 줄과 직전 `test-result` 첫 줄을 읽어 기록하기 때문이다.
+관측한 시점에 남기지 않으면 사라지는 증거라서 주입 기록에 함께 넣는다.
+
 ## 9. 실패했을 때
 
 `reports/<run-id>/eval-result.md` 의 표에서 `FAIL` 인 행의 "근거" 열을 먼저 본다.
@@ -949,17 +1194,24 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 | `harness-eval-002` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_002_CHECK_NAMES` (35항목) |
 | `harness-eval-003` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_003_CHECK_NAMES` (26항목) |
 | `harness-eval-004` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_004_CHECK_NAMES` (52항목) |
-| 보존된 대표 결과 4건이 현재 판정 코드에서도 전부 PASS | `reports/examples/` 의 `EVAL-…-HARNESS-EVAL-001` ~ `-004` |
+| `harness-eval-005` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_005_CHECK_NAMES` (28항목) |
+| `harness-eval-006` 검증 항목 이름과 순서가 골든 목록과 일치 | `GOLDEN_006_CHECK_NAMES` (54항목) |
+| 보존된 대표 결과 6건이 현재 판정 코드에서도 전부 PASS | `reports/examples/` 의 `EVAL-…-HARNESS-EVAL-001` ~ `-006` |
 | 모든 시나리오의 task / fault / fixture 파일 존재 | `SCENARIOS` 정의 |
 | 시나리오별 설치 경로가 서로 겹치지 않음 | `SCENARIOS` 정의 |
 | `replan_checks` 시나리오의 결함이 `precheck` 를 갖고 계획 범위 밖을 대상으로 함 | 결함 정의 |
 | 즉시 종료 시나리오의 삭제 대상이 설치 목록 안이고 `precheck_fs` 를 갖춤 | 결함 정의 |
+| 테스트 결함 주입 대상이 설치 목록 안 `sample-project/tests/` 이고 `precheck_test` 를 갖춤 | 결함 정의 |
 | 즉시 종료 시나리오의 기대 종료 상태가 라우팅 규칙과 일치 | `SCENARIOS` 정의 |
 | 예산 소진 시나리오의 결함이 시도 수만큼 **서로 다르게** 정의됨 | `SCENARIOS` 정의 |
 | 예산 소진 시나리오의 결함이 순서대로 직전 결함을 가리킴 (`PREVIOUS_FAULT_ID`) | 결함 정의 |
 | 예산 소진 시나리오의 모든 결함이 계획 범위 **안** 전제를 `precheck` 로 검사 | 결함 정의 |
 | 예산 소진 시나리오의 시도별 실패 증상이 서로 다르고 `SIGNATURE_TEST` 와 일치 | 결함 정의 |
 | 예산 소진 시나리오의 기대 종료 상태가 예산 판정과 일치 (`retry_count == retry_budget`) | `SCENARIOS` 정의 |
+| Reviewer 예산 소진 시나리오의 결함이 계획 범위 **안** 을 대상으로 함 | 결함 정의 |
+| Reviewer 예산 소진 시나리오의 결함이 서로 다른 규칙(`VIOLATED_RULE`)을 어김 | 결함 정의 |
+| Reviewer 예산 소진 시나리오가 Tester 실패를 기대하지 않음 | `SCENARIOS` 정의 |
+| Reviewer 예산 소진 시나리오의 승격 필수 목록에 `review.md` 가 포함됨 | `SCENARIOS` 정의 |
 | plan / change-log 파서가 목록 항목만 인식 | 보존된 대표 결과의 실제 산출물 |
 | 실패 테스트 파서가 pytest 요약 줄만 인식 | 보존된 대표 결과의 실제 산출물 |
 | 실패 테스트 파서가 설명 문장의 테스트 이름을 실패로 보지 않음 | 합성 입력 |
@@ -969,18 +1221,20 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 
 결함 제거·잔존 여부, 테스트 약화 여부, git 상태는 실행 환경에 의존하므로 replay 대상이 아니다.
 항목 이름과 순서만 유지하고 판정은 건너뛴다. 이 항목들은 라이브 실행으로만 검증된다.
-제외 개수는 시나리오마다 다르다. (001 · 002 · 003 은 각 3항목, 004 는 결함 제거 확인이 2회 더
-있어 5항목)
+제외 개수는 시나리오마다 다르다. (001 · 002 · 003 · 005 는 각 3항목, 004 · 006 은 결함 제거
+확인이 2회 더 있어 5항목)
 
-현재는 네 시나리오 모두 대표 결과가 보존되어 있고 `REGRESSION_EXAMPLES` 에 등록되어 replay 대상이다.
-(`harness-eval-001` 25항목 / `harness-eval-002` 35항목 / `harness-eval-003` 26항목 /
-`harness-eval-004` 52항목, `selftest` 전체 40항목) 대표 결과가 아직 없는 시나리오를 새로 추가하면
+현재는 여섯 시나리오 모두 대표 결과가 보존되어 있고 `REGRESSION_EXAMPLES` 에 등록되어 replay
+대상이다. (`harness-eval-001` 25항목 / `harness-eval-002` 35항목 / `harness-eval-003` 26항목 /
+`harness-eval-004` 52항목 / `harness-eval-005` 28항목 / `harness-eval-006` 54항목,
+`selftest` 전체 63항목)
+대표 결과가 아직 없는 시나리오를 새로 추가하면
 그 시나리오는 정의가 실제 파일 및 운영 라우팅 규칙과 맞물려 있는지만 확인하고, 대표 결과를 승격한
 뒤 `REGRESSION_EXAMPLES` 에 골든 목록과 함께 추가한다.
 
 승격된 대표 결과에 시나리오가 요구하는 산출물이 빠져 있으면 판정 replay는 성립하지 않는다.
 이때는 조용히 넘어가지 않고 `판정 replay 범위` 항목에 무엇이 없어서 어디까지만 대조했는지를
-남긴다. 현재 등록된 대표 결과 4건은 모두 필요한 산출물을 갖추고 있어 이 경로로 빠지지 않는다.
+남긴다. 현재 등록된 대표 결과 6건은 모두 필요한 산출물을 갖추고 있어 이 경로로 빠지지 않는다.
 (과거 `harness-eval-002` 대표 결과에 `plan-1.md` / `plan-2.md` 가 빠져 있던 적이 있고,
 그때 이 항목이 축소된 대조 범위를 드러냈다. 이후 승격을 다시 해 해소됐다.)
 
@@ -1006,6 +1260,7 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 | `precheck(plan_allowed_files)` | | 있으면 주입 전에 호출된다. `plan.md` 의 수정 허용 파일 목록을 받아 계획 범위에 대한 전제를 검사하고, 위반 시 `ValueError` 를 낸다 |
 | `PREVIOUS_FAULT_ID` | | 연쇄 주입에서 이 결함보다 먼저 주입된 결함. 주입 전에 그 결함이 제거됐는지 확인하는 데 쓴다 (§3-13) |
 | `SIGNATURE_TEST` | | 이 결함으로 **새로** 실패하게 되는 테스트 이름. 시나리오의 `expected_failing_tokens` 와 대조된다 |
+| `VIOLATED_RULE` | | 이 결함이 어기는 규칙 한 줄. 테스트를 깨뜨리지 않고 품질 기준만 어기는 결함(§3-17)에 쓰며, `fault-injection-N.md` 의 주입 방식 절에 인용된다 |
 
 `retry_001` 처럼 `precheck` 가 없으면 호출되지 않으므로 기존 결함 정의는 그대로 동작한다.
 
@@ -1026,6 +1281,29 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 실제 삭제는 `eval_harness.py` 가 §3-10의 조건을 함께 확인한 뒤 수행한다.
 결함 정의는 무엇을 지울지와 지워도 되는 조건만 선언한다.
 
+### 11-3. `test_injection` — 설치된 테스트 fixture에 테스트를 덧붙인다
+
+| 이름 | 필수 | 설명 |
+| --- | --- | --- |
+| `FAULT_KIND` | O | `"test_injection"` |
+| `FAULT_ID` | O | 결함 식별자 |
+| `TARGET_PATH` | O | 주입 대상 경로. `sample-project/tests/` 안이어야 하고 `installs` 에 있어야 한다 |
+| `MARKER` | O | 주입 여부를 문자열 비교로 판정하기 위한 표식 |
+| `ANCHOR` | O | 주입 전제 조건이 되는 문자열. 모순의 상대편이 되는 기존 테스트 |
+| `DESCRIPTION` | O | 결함 내용 한 줄 설명 |
+| `FAULT_CODE` | O | 덧붙일 테스트 코드. 기존 테스트를 고치는 코드를 넣지 않는다 |
+| `SYMPTOM` | | 주입 이후 Tester가 보게 되는 증상 |
+| `SIGNATURE_TEST` | | 이 결함으로 새로 실패하게 되는 테스트 이름 |
+| `precheck_test(context)` | O | 주입 전제 조건 검사. 위반 시 `ValueError` |
+| `is_applied(source)` | O | 이미 주입되어 있는지 판정 |
+| `apply(source)` | O | 주입된 새 내용을 반환. 전제 조건 위반 시 `ValueError` |
+
+`context` 는 `resource_removal` 의 다섯 키에 `fixture_content`(설치 원본 fixture 내용)를
+더한 dict다. 주입 직전 파일이 설치 시점과 완전히 같은지 확인하는 데 쓴다. (§3-15)
+
+`apply` 는 **덧붙이기만** 해야 한다. 기존 테스트를 수정·삭제·skip 처리하는 결함 정의는
+`CLAUDE.md §3-3` 위반이며, 주입 후 완전 비교 판정에서 FAIL 로 잡힌다.
+
 ---
 
 ## 12. 새로운 시나리오 추가
@@ -1044,11 +1322,12 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 | `expected_category` | Tester 1차가 기록해야 하는 실패 원인 분류 |
 | `expected_failing_token` | `test-result-1.md` 에 남아야 하는 실패 테스트 식별 문자열 |
 | `transition` | `eval-result.md` 에 기록할 검증 대상 전이 |
-| `outcome` | 종료 형태 (선택, 기본값 `SUCCESS_AFTER_RETRY`). 즉시 종료는 `BLOCKED`, 예산 소진은 `BLOCKED_AFTER_RETRIES` |
+| `outcome` | 종료 형태 (선택, 기본값 `SUCCESS_AFTER_RETRY`). 즉시 종료는 `BLOCKED`, Tester 실패로 예산이 마르면 `BLOCKED_AFTER_RETRIES`, Reviewer 지적으로 마르면 `BLOCKED_AFTER_REVIEW` |
 | `expected_retry_count` | `state.json` 의 기대 `retry_count` (선택, 기본값 1) |
 | `expected_attempts` | `state.json` 의 기대 `attempts` 개수 (선택, 기본값 2) |
 | `expected_blocked_reason` | 즉시 종료 시 기대 `blocked_reason` (선택) |
 | `forbidden_artifacts` | 즉시 종료 시 존재하면 안 되는 (산출물, 주체) 목록 (선택) |
+| `verify_budget_untouched` | 예산이 있었는데도 쓰이지 않았다는 사실을 판정할지 (선택). `retry_budget` 과 `unknown_retry_used` 항목이 추가된다 |
 | `failing_token_check_name` | 실패 증상 기록 항목의 이름 (선택) |
 | `expected_plan1_allowed` | Planner 1차가 확정해야 하는 수정 허용 파일 목록 (선택) |
 | `snapshot_plan` | inject 시점에 `plan-1.md` 스냅샷을 남길지 (선택) |
@@ -1105,3 +1384,148 @@ E 를 확인하려면 payload 를 기록하는 관찰용 훅을 `--settings` 로
 
 확인 후 `reports/RUN-LIVECHECK-*` 를 삭제하고 `git status --short` 로 저장소가
 깨끗한지 확인한다. (`reports/*` 는 `.gitignore` 대상이지만 남겨 두지 않는다.)
+
+---
+
+## 14. 실행 절차 — `harness-eval-005` (TEST_DEFECT)
+
+§4와 다른 부분만 적는다. 나머지는 동일하다.
+
+### 14-1. setup
+
+```bash
+uv run python evals/eval_harness.py setup --scenario harness-eval-005
+```
+
+결함이 있는 제품 모듈 `coupon.py` 와 그 계약 테스트 `test_coupon.py` 두 개를 설치한다.
+이 시점에는 테스트에 모순이 없고 제품 버그 때문에 5건이 실패한다.
+
+### 14-2. Planner
+
+Task 경로는 다음을 사용한다.
+
+```text
+evals/fixtures/HARNESS-EVAL-005.md
+```
+
+run-id 형식은 `RUN-YYYYMMDD-HHMM-HARNESS-EVAL-005` 가 된다.
+
+### 14-3. Developer 1차
+
+`developer` 를 시도 번호 `N = 1` 로 호출한다. 산출물은 `change-log-1.md` 다.
+이 단계가 끝나면 제품 버그가 해결되어 전체 테스트가 통과하는 상태가 된다.
+
+### 14-4. Fault Injection
+
+Developer 1차가 끝나고 **Tester를 호출하기 전에** 한 번만 실행한다.
+
+```bash
+uv run python evals/eval_harness.py inject --run-id <run-id>
+```
+
+이때 두 가지가 함께 일어난다.
+
+1. `reports/<run-id>/plan-1.md` 에 Planner 1차 산출물이 복사된다.
+2. §3-15의 조건을 모두 통과한 경우에만 `test_coupon.py` 끝에 모순 테스트 하나가 덧붙는다.
+
+주입 직후 실패는 정확히 1건이다. 기존 테스트는 전부 통과한 채로 주입된 테스트만 실패한다.
+
+### 14-5. Tester 1차
+
+`test-result-1.md` 는 `STATUS: FAIL`, 실패 원인 분류는 `TEST_DEFECT` 가 되어야 한다.
+
+Tester에게 결함 주입 사실이나 기대 분류를 알리지 않는다. (§3-16)
+
+### 14-6. FAIL 라우팅 — 여기서 끝난다
+
+`TEST_DEFECT` 는 자동 수정 대상이 아니므로 **`retry_count` 를 증가시키지 않고** 즉시
+`BLOCKED` 로 종료한다. (`CLAUDE.md §20`, `patchpilot.md §5`)
+
+Developer도 Planner도 Reviewer도 다시 호출하지 않는다. Orchestrator는 `report.md` 와
+`state.json` 만 마감한다. `blocked_reason` 은 `TEST_DEFECT_NEEDS_HUMAN` 이다.
+
+`report.md` 에는 사람이 무엇을 판단해야 하는지(어느 배분 방향이 옳은 명세인지) 기록한다.
+
+### 14-7. 자동 검증 + teardown
+
+```bash
+uv run python evals/eval_harness.py finish --run-id <run-id>
+```
+
+주입된 테스트는 복구하지 않는다. teardown이 테스트 fixture와 함께 통째로 제거한다.
+
+---
+
+---
+
+## 15. 실행 절차 — `harness-eval-006` (REVIEW_CHANGES_REQUESTED_NO_BUDGET)
+
+§4·§7과 다른 부분만 적는다. 나머지는 동일하다.
+
+### 15-1. setup
+
+```bash
+uv run python evals/eval_harness.py setup --scenario harness-eval-006
+```
+
+결함이 있는 제품 모듈 `refund.py` 와 그 반환값 계약 테스트 `test_refund.py` 두 개를 설치한다.
+이 시점에는 제품 버그 때문에 4건이 실패한다.
+
+### 15-2. Planner
+
+Task 경로는 다음을 사용한다.
+
+```text
+evals/fixtures/HARNESS-EVAL-006.md
+```
+
+run-id 형식은 `RUN-YYYYMMDD-HHMM-HARNESS-EVAL-006` 이 된다.
+
+Planner가 확정한 수정 허용 파일 목록에 `sample-project/src/expense/refund.py` 가 **포함되어야**
+한다. 빠져 있으면 결함의 `precheck` 가 주입을 거부하고 eval이 중단된다. Planner 산출물을
+목록에 맞춰 고치지 않는다. (§3-17)
+
+### 15-3. 시도 1 ~ 3 반복
+
+각 시도 `N` 에서 다음 순서를 지킨다.
+
+1. `developer` 를 시도 번호 `N` 으로 호출한다. 산출물은 `change-log-N.md` 다.
+   * `N >= 2` 이면 프롬프트에 `review.md` 경로와 "Reviewer 지적사항 반영" 이라는 재수정 사유를
+     포함한다. (`patchpilot.md §7-2`)
+2. 결함을 주입한다.
+
+   ```bash
+   uv run python evals/eval_harness.py inject --run-id <run-id> --attempt N
+   ```
+
+   * `N >= 2` 이면 주입 전에 네 가지를 확인한다. 하나라도 어긋나면 주입하지 않고 실패시킨다.
+     직전 결함이 실제로 제거됐는지(§3-13), 직전 `test-result-{N-1}.md` 첫 줄이 `STATUS: PASS`
+     인지, 현재 `review.md` 첫 줄이 `VERDICT: CHANGES_REQUESTED` 인지, `change-log-N.md` 가
+     Reviewer 지적을 재수정 근거로 적고 있는지.
+   * 이 확인 결과는 `fault-injection-N.md` 에 기록된다. `review.md` 는 회차마다 덮어써지므로
+     **그 시점에 남기지 않으면 사라지는 증거**다.
+3. `tester` 를 호출한다. 결과는 `STATUS: PASS` 여야 한다. 주입된 결함은 반환값과 예외 동작을
+   바꾸지 않으므로 전체 테스트가 통과하는 것이 정상이다.
+4. `reviewer` 를 호출한다. 프롬프트는 `patchpilot.md §7` 구성 그대로이며 eval 전용 항목을
+   넣지 않는다. (§3-18)
+5. `review.md` 첫 줄이 `VERDICT: CHANGES_REQUESTED` 이면 `retry_count += 1` 후 §6 예산 판정을
+   적용한다. (`patchpilot.md §7-2`)
+
+### 15-4. 예산 소진 — 여기서 끝난다
+
+Reviewer 3차의 `CHANGES_REQUESTED` 로 `retry_count` 가 3이 되어 `retry_budget` 에 도달한다.
+Developer 4차와 Tester 4차를 **호출하지 않고** 종료한다.
+
+`blocked_reason` 은 `REVIEW_CHANGES_REQUESTED_NO_BUDGET` 이다. `RETRY_BUDGET_EXCEEDED` 가
+아니다. `patchpilot.md §6` 이 이 경우만 사유 코드를 따로 정하고 있다.
+
+마지막으로 주입된 `review_budget_003` 은 제품 코드에 **남은 채로** 종료된다. (§3-14)
+
+### 15-5. 자동 검증 + teardown
+
+```bash
+uv run python evals/eval_harness.py finish --run-id <run-id>
+```
+
+`review.md` 는 승격 필수 목록에 포함된다. 종료 사유의 근거가 그 파일이기 때문이며,
+`guard_stop_gate.py` 의 G16도 같은 것을 요구한다.

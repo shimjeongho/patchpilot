@@ -111,6 +111,25 @@ RETRY_EXHAUSTED_PROMOTED_FILES = (
     "state.json",
 )
 
+# Reviewer 지적으로 예산을 모두 소비하고 종료되는 시나리오의 승격 대상.
+# 시도 3회분 산출물이 모두 있어야 하고, `RETRY_EXHAUSTED` 와 달리 Reviewer 산출물이
+# **반드시 있어야 한다.** 종료 사유(`REVIEW_CHANGES_REQUESTED_NO_BUDGET`)의 근거가
+# `review.md` 이기 때문이다. (`guard_stop_gate.py` G16)
+REVIEW_EXHAUSTED_PROMOTED_FILES = (
+    "fault-injection-1.md",
+    "change-log-1.md",
+    "test-result-1.md",
+    "fault-injection-2.md",
+    "change-log-2.md",
+    "test-result-2.md",
+    "fault-injection-3.md",
+    "change-log-3.md",
+    "test-result-3.md",
+    "review.md",
+    "report.md",
+    "state.json",
+)
+
 # 대표 결과에 함께 복사하면 좋지만 없어도 승격을 막지는 않는 산출물.
 OPTIONAL_PROMOTED_FILES = ["plan.md", "eval-result.md"]
 
@@ -120,13 +139,29 @@ PYTEST_COMMAND = "uv run pytest sample-project/tests -q"
 OUTCOME_SUCCESS_AFTER_RETRY = "SUCCESS_AFTER_RETRY"  # 재시도 후 SUCCESS 로 끝난다.
 OUTCOME_BLOCKED = "BLOCKED"  # 재시도하지 않고 즉시 BLOCKED 로 끝난다.
 OUTCOME_RETRY_EXHAUSTED = "BLOCKED_AFTER_RETRIES"  # 재시도 예산을 모두 쓰고 BLOCKED 로 끝난다.
+# Tester 는 매번 PASS 하는데 Reviewer 의 CHANGES_REQUESTED 만으로 예산이 소진되어 끝난다.
+# `OUTCOME_RETRY_EXHAUSTED` 와 종료 사유가 다르고(`patchpilot.md §6`), 판정 골격도 다르다.
+# 그쪽은 시도마다 Tester FAIL 을 요구하지만 이쪽은 시도마다 Tester PASS 를 요구한다.
+OUTCOME_REVIEW_EXHAUSTED = "BLOCKED_AFTER_REVIEW"
 
 # 결함 유형. 제품 코드에 문자열을 주입하는 방식과 설치된 리소스를 삭제하는 방식을 구분한다.
 FAULT_KIND_CODE_INJECTION = "code_injection"
 FAULT_KIND_RESOURCE_REMOVAL = "resource_removal"
+# 설치된 테스트 fixture에 테스트를 덧붙이는 방식. 기존 테스트는 건드리지 않는다.
+FAULT_KIND_TEST_INJECTION = "test_injection"
 
 # 결함 주입이 파일을 삭제할 수 있는 유일한 최상위 경로.
 REMOVABLE_ROOT = "sample-project/"
+
+# 테스트 결함 주입이 건드릴 수 있는 유일한 최상위 경로.
+TEST_INJECTION_ROOT = "sample-project/tests/"
+
+# 즉시 종료 경로에서 실패 원인 분류가 어떤 사유 코드로 이어지는지. (`patchpilot.md §5`, `§10`)
+# Eval 편의를 위해 새로 정의한 관계가 아니라, 운영 라우팅 규칙을 그대로 옮긴 것이다.
+BLOCKED_REASON_BY_CATEGORY = {
+    "ENVIRONMENT_ERROR": "ENVIRONMENT_ERROR",
+    "TEST_DEFECT": "TEST_DEFECT_NEEDS_HUMAN",
+}
 
 
 @dataclass
@@ -177,6 +212,12 @@ class Scenario:
     expected_blocked_reason: str = ""
     # 즉시 종료 시나리오에서 존재하면 안 되는 산출물. (파일명, 호출되지 않아야 하는 주체)
     forbidden_artifacts: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    # 예산이 **있었는데도 쓰이지 않았다** 는 사실 자체가 판정 대상인지 여부.
+    # 예산 소진 경로는 `retry_count` 가 예산에 도달했다는 사실이 종료 사유의 근거지만,
+    # 예산을 소비하지 않는 즉시 종료 경로(`TEST_DEFECT`)는 그 반대가 근거다. 예산이 3으로
+    # 남아 있고 `unknown_retry_used` 도 false 여야 "예산 판정을 지나가지 않고 끝났다" 가
+    # 성립한다. (`CLAUDE.md §16`, `patchpilot.md §5`)
+    verify_budget_untouched: bool = False
     # 실패 증상 기록 항목의 이름. 실패가 개별 테스트 실패가 아닌 시나리오에서 바꾼다.
     failing_token_check_name: str = "test-result-1.md 가 주입된 결함의 실패 테스트를 기록"
     # Planner 1차가 확정해야 하는 수정 허용 파일 목록. 비어 있으면 검사하지 않는다.
@@ -326,6 +367,76 @@ SCENARIOS: dict[str, Scenario] = {
         # Planner 재호출 판정용 기준선. `PRODUCT_CODE_DEFECT` 경로는 Planner를 부르지 않는다.
         snapshot_plan=True,
         promoted_files=RETRY_EXHAUSTED_PROMOTED_FILES,
+        extra_promoted_files=("plan-1.md",),
+    ),
+    "harness-eval-006": Scenario(
+        scenario_id="harness-eval-006",
+        task="evals/fixtures/HARNESS-EVAL-006.md",
+        # 시도마다 다른 결함을 주입한다. 셋 다 동작을 바꾸지 않고 품질 기준만 어긴다.
+        fault="review_budget_001",
+        installs=(
+            ("refund.py", "sample-project/src/expense/refund.py"),
+            ("test_refund.py", "sample-project/tests/test_refund.py"),
+        ),
+        # Tester 가 한 번도 실패하지 않는 시나리오다. 실패 원인 분류도 실패 테스트도 없다.
+        expected_category="",
+        expected_failing_token="",
+        transition=(
+            "Planner -> Developer 1차 -> Fault Injection(결함 B, 테스트 중립) -> Tester PASS\n"
+            "-> Reviewer CHANGES_REQUESTED -> retry_count = 1 -> Developer 2차(B 제거)\n"
+            "-> Fault Injection(결함 C) -> Tester PASS -> Reviewer CHANGES_REQUESTED\n"
+            "-> retry_count = 2 -> Developer 3차(C 제거) -> Fault Injection(결함 D)\n"
+            "-> Tester PASS -> Reviewer CHANGES_REQUESTED -> retry_count = 3 = retry_budget\n"
+            "-> Developer 4차 / Tester 4차 미호출\n"
+            "-> BLOCKED (REVIEW_CHANGES_REQUESTED_NO_BUDGET)"
+        ),
+        outcome=OUTCOME_REVIEW_EXHAUSTED,
+        expected_retry_count=3,
+        expected_attempts=3,
+        fault_sequence=("review_budget_001", "review_budget_002", "review_budget_003"),
+        expected_retry_budget=3,
+        expected_blocked_reason="REVIEW_CHANGES_REQUESTED_NO_BUDGET",
+        forbidden_artifacts=(
+            ("change-log-4.md", "Developer 4차"),
+            ("test-result-4.md", "Tester 4차"),
+            ("fault-injection-4.md", "4차 결함 주입"),
+        ),
+        # Planner 재호출 판정용 기준선. Reviewer 경로는 Planner 를 부르지 않는다.
+        snapshot_plan=True,
+        promoted_files=REVIEW_EXHAUSTED_PROMOTED_FILES,
+        extra_promoted_files=("plan-1.md",),
+    ),
+    "harness-eval-005": Scenario(
+        scenario_id="harness-eval-005",
+        task="evals/fixtures/HARNESS-EVAL-005.md",
+        fault="test_defect_001",
+        installs=(
+            ("coupon.py", "sample-project/src/expense/coupon.py"),
+            ("test_coupon.py", "sample-project/tests/test_coupon.py"),
+        ),
+        expected_category="TEST_DEFECT",
+        # 결함이 새로 추가한 테스트. 기존 테스트가 아니라 이 테스트가 실패해야 한다.
+        expected_failing_token="test_apply_coupon_gives_remainder_to_the_last_item",
+        transition=(
+            "Planner -> Developer 1차 -> Fault Injection(모순 테스트 추가) -> Tester FAIL\n"
+            "-> TEST_DEFECT -> 재시도 예산 미소비(retry_count = 0) -> 테스트 자동 수정 없음\n"
+            "-> Planner 2차 / Developer 2차 / Tester 2차 / Reviewer 미호출\n"
+            "-> BLOCKED (TEST_DEFECT_NEEDS_HUMAN)"
+        ),
+        outcome=OUTCOME_BLOCKED,
+        expected_retry_count=0,
+        expected_attempts=1,
+        expected_blocked_reason="TEST_DEFECT_NEEDS_HUMAN",
+        forbidden_artifacts=(
+            ("change-log-2.md", "Developer 2차"),
+            ("test-result-2.md", "Tester 2차"),
+            ("review.md", "Reviewer"),
+        ),
+        # 예산이 3으로 남아 있는데 하나도 쓰이지 않았다는 것이 이 경로의 핵심이다.
+        verify_budget_untouched=True,
+        # Planner 2차가 호출되지 않았다는 것을 plan.md 해시 비교로 판정하기 위한 스냅샷.
+        snapshot_plan=True,
+        promoted_files=BLOCKED_PROMOTED_FILES,
         extra_promoted_files=("plan-1.md",),
     ),
 }
@@ -501,6 +612,98 @@ GOLDEN_004_CHECK_NAMES = (
     "report.md 에 BLOCKED 종료와 사유가 기록됨",
 )
 
+# 리팩터링 이후에도 `harness-eval-005` 가 그대로 만들어 내야 하는 검증 항목 이름과 순서.
+# 근거는 `reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/eval-result.md` 다.
+GOLDEN_005_CHECK_NAMES = (
+    "plan.md 존재",
+    "plan-1.md 스냅샷 존재",
+    "change-log-1.md 존재",
+    "fault-injection.md 존재",
+    "결함 주입이 Developer 1차 이후에 이루어짐",
+    "test-result-1.md 첫 줄이 STATUS: FAIL",
+    "test-result-1.md 에 고정 실행 명령 기록",
+    "test-result-1.md 가 주입된 결함의 실패 테스트를 기록",
+    "실패 원인 분류가 TEST_DEFECT",
+    "Planner 2차가 호출되지 않음",
+    "Developer 2차가 호출되지 않음",
+    "Tester 2차가 호출되지 않음",
+    "Reviewer가 호출되지 않음",
+    "state.json 존재",
+    "state.json retry_count == 0",
+    "state.json retry_budget == 3",
+    "state.json unknown_retry_used == false",
+    "state.json final_status == BLOCKED",
+    "state.json current_stage == DONE",
+    "state.json blocked_reason == TEST_DEFECT_NEEDS_HUMAN",
+    "state.json attempts 가 1회 기록",
+    "attempts[0] 이 FAIL / TEST_DEFECT",
+    "state.json review.verdict 없음",
+    "주입된 모순 테스트가 그대로 남아 있고 기존 테스트가 변경되지 않음",
+    "eval 테스트가 약화되지 않음",
+    "기존 추적 파일이 변경되지 않음",
+    "report.md 존재",
+    "report.md 에 BLOCKED 종료와 사유가 기록됨",
+)
+
+# 리팩터링 이후에도 `harness-eval-006` 이 그대로 만들어 내야 하는 검증 항목 이름과 순서.
+# 근거는 `reports/examples/EVAL-20260827-1219-HARNESS-EVAL-006/eval-result.md` 다.
+GOLDEN_006_CHECK_NAMES = (
+    "plan.md 존재",
+    "plan-1.md 스냅샷 존재",
+    "change-log-1.md 존재",
+    "fault-injection-1.md 존재",
+    "1차 결함 주입이 Developer 1차 이후에 이루어짐",
+    "1차 주입 결함이 review_budget_001",
+    "test-result-1.md 첫 줄이 STATUS: PASS",
+    "test-result-1.md 에 고정 실행 명령 기록",
+    "1차 주입 결함이 테스트를 깨뜨리지 않음",
+    "change-log-2.md 존재",
+    "change-log-2.md 가 Reviewer 지적을 재수정 근거로 사용",
+    "change-log-2.md 가 이전 시도와 다른 가설을 기록",
+    "Developer 2차가 1차 주입 결함을 제거함",
+    "fault-injection-2.md 존재",
+    "2차 결함 주입이 Developer 2차 이후에 이루어짐",
+    "2차 주입 결함이 review_budget_002",
+    "2차 주입 결함이 이전 시도와 다름",
+    "test-result-2.md 첫 줄이 STATUS: PASS",
+    "test-result-2.md 에 고정 실행 명령 기록",
+    "2차 주입 결함이 테스트를 깨뜨리지 않음",
+    "change-log-3.md 존재",
+    "change-log-3.md 가 Reviewer 지적을 재수정 근거로 사용",
+    "change-log-3.md 가 이전 시도와 다른 가설을 기록",
+    "Developer 3차가 2차 주입 결함을 제거함",
+    "fault-injection-3.md 존재",
+    "3차 결함 주입이 Developer 3차 이후에 이루어짐",
+    "3차 주입 결함이 review_budget_003",
+    "3차 주입 결함이 이전 시도와 다름",
+    "test-result-3.md 첫 줄이 STATUS: PASS",
+    "test-result-3.md 에 고정 실행 명령 기록",
+    "3차 주입 결함이 테스트를 깨뜨리지 않음",
+    "재시도 예산을 소비한 주체가 Reviewer 임",
+    "review.md 첫 줄이 VERDICT: CHANGES_REQUESTED",
+    "Planner 2차가 호출되지 않음",
+    "Developer 4차가 호출되지 않음",
+    "Tester 4차가 호출되지 않음",
+    "4차 결함 주입이 이루어지지 않음",
+    "state.json 존재",
+    "state.json retry_count == 3",
+    "state.json retry_budget == 3",
+    "state.json unknown_retry_used == false",
+    "state.json final_status == BLOCKED",
+    "state.json current_stage == DONE",
+    "state.json blocked_reason == REVIEW_CHANGES_REQUESTED_NO_BUDGET",
+    "state.json attempts 가 3회 기록",
+    "attempts[0] 이 PASS / 실패 원인 분류 없음",
+    "attempts[1] 이 PASS / 실패 원인 분류 없음",
+    "attempts[2] 이 PASS / 실패 원인 분류 없음",
+    "state.json review.verdict == CHANGES_REQUESTED",
+    "마지막 주입 결함이 제거되지 않고 남아 있음",
+    "eval 테스트가 약화되지 않음",
+    "기존 추적 파일이 변경되지 않음",
+    "report.md 존재",
+    "report.md 에 BLOCKED 종료와 사유가 기록됨",
+)
+
 # `selftest` 가 회귀 기준으로 삼는 (시나리오, 보존된 대표 결과, 골든 목록).
 # 새 시나리오는 대표 결과를 승격한 뒤에 여기에 추가한다.
 REGRESSION_EXAMPLES = (
@@ -508,6 +711,8 @@ REGRESSION_EXAMPLES = (
     ("harness-eval-002", "EVAL-20260820-1443-HARNESS-EVAL-002", GOLDEN_002_CHECK_NAMES),
     ("harness-eval-003", "EVAL-20260820-1554-HARNESS-EVAL-003", GOLDEN_003_CHECK_NAMES),
     ("harness-eval-004", "EVAL-20260820-1752-HARNESS-EVAL-004", GOLDEN_004_CHECK_NAMES),
+    ("harness-eval-005", "EVAL-20260827-1136-HARNESS-EVAL-005", GOLDEN_005_CHECK_NAMES),
+    ("harness-eval-006", "EVAL-20260827-1219-HARNESS-EVAL-006", GOLDEN_006_CHECK_NAMES),
 )
 
 
@@ -782,6 +987,36 @@ def previous_failure_reference(
     )
 
 
+# Reviewer 판정으로 재수정이 시작됐다는 것을 change-log 에서 확인하기 위한 참조 표현.
+# 실패 결과 참조(`_previous_attempt_reference`)와 달리 시도 번호가 붙지 않는다.
+# `review.md` 는 회차마다 덮어써지는 파일 하나뿐이기 때문이다. (`patchpilot.md §7`)
+_REVIEW_REFERENCE_PATTERNS = (
+    r"review\.md",
+    r"Reviewer",
+    r"리뷰(?:어)?\s*(?:지적|의견|결과|판정)",
+    r"지적\s*사항",
+    r"CHANGES_REQUESTED",
+)
+
+
+def review_reference(change_log: str) -> tuple[bool, str]:
+    """change-log 가 Reviewer 지적을 재수정 근거로 삼았는지 판정한다.
+
+    실패 결과 참조(`previous_failure_reference`)처럼 "관측값 인용" 을 함께 요구하지는 않는다.
+    Reviewer 경로에서는 그보다 강한 물리적 증거를 따로 확인하기 때문이다. 다음 결함을 주입하기
+    전에 **직전 결함이 실제로 제거되었는지** 를 표식과 해시로 대조하므로(`§3-13`), 형식 문구만
+    적고 아무것도 하지 않은 change-log 는 그 단계에서 걸린다.
+
+    Returns:
+        (판정 결과, 근거 설명).
+    """
+    for pattern in _REVIEW_REFERENCE_PATTERNS:
+        match = re.search(pattern, change_log)
+        if match:
+            return True, "참조 표현={0!r}".format(match.group(0))
+    return False, "Reviewer 지적을 가리키는 참조 표현 없음"
+
+
 def section_body(text: str, heading_keyword: str) -> str:
     """`heading_keyword` 를 포함하는 `##` 제목 아래 본문을 다음 제목 직전까지 반환한다.
 
@@ -945,9 +1180,13 @@ def cmd_inject(run_id: str, fault_id: str | None, attempt: int | None) -> int:
     if scenario.is_chained:
         evidence = _guard_chained_injection(scenario, fault, run_dir, run_id, attempt, previous)
 
-    if fault_kind_of(fault) == FAULT_KIND_RESOURCE_REMOVAL:
+    kind = fault_kind_of(fault)
+    if kind == FAULT_KIND_RESOURCE_REMOVAL:
         record = _inject_resource_removal(fault, state, run_id)
         report = _resource_removal_report(fault, record)
+    elif kind == FAULT_KIND_TEST_INJECTION:
+        record = _inject_test_fault(fault, scenario, state, run_id, attempt=attempt)
+        report = _fault_injection_report(fault, record, scenario)
     else:
         record = _inject_code_fault(fault, run_dir, run_id, attempt=attempt, evidence=evidence)
         report = _fault_injection_report(fault, record, scenario)
@@ -1030,6 +1269,7 @@ def _guard_chained_injection(
             f"{fault.FAULT_ID} 주입 전제 조건 위반: reports/{run_id}/change-log-{attempt}.md 가 "
             f"없습니다. Developer {attempt}차가 끝난 뒤에 주입해야 합니다."
         )
+    review_evidence: dict = {}
     if attempt >= 2:
         previous_result = read_run_file(run_dir, f"test-result-{attempt - 1}.md")
         if previous_result is None:
@@ -1038,16 +1278,23 @@ def _guard_chained_injection(
                 f"reports/{run_id}/test-result-{attempt - 1}.md 가 없어 근거 사용 여부를 "
                 f"확인할 수 없습니다."
             )
-        referenced, detail = previous_failure_reference(change_log, previous_result, attempt - 1)
-        if not referenced:
-            raise EvalError(
-                f"{fault.FAULT_ID} 주입 전제 조건 위반: change-log-{attempt}.md 가 "
-                f"{attempt - 1}차 실패 결과를 근거로 사용했다는 증거를 찾지 못했습니다. "
-                f"({detail}) (`CLAUDE.md §16`)"
+        if scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+            review_evidence = _guard_review_driven_retry(
+                fault, change_log, previous_result, run_dir, run_id, attempt
             )
+        else:
+            referenced, detail = previous_failure_reference(
+                change_log, previous_result, attempt - 1
+            )
+            if not referenced:
+                raise EvalError(
+                    f"{fault.FAULT_ID} 주입 전제 조건 위반: change-log-{attempt}.md 가 "
+                    f"{attempt - 1}차 실패 결과를 근거로 사용했다는 증거를 찾지 못했습니다. "
+                    f"({detail}) (`CLAUDE.md §16`)"
+                )
 
     if previous is None:
-        return {"attempt_change_log": f"change-log-{attempt}.md"}
+        return {"attempt_change_log": f"change-log-{attempt}.md", **review_evidence}
 
     expected_previous = getattr(fault, "PREVIOUS_FAULT_ID", None)
     if expected_previous != previous["fault_id"]:
@@ -1078,12 +1325,76 @@ def _guard_chained_injection(
 
     return {
         "attempt_change_log": f"change-log-{attempt}.md",
+        **review_evidence,
         "previous_fault_id": previous["fault_id"],
         "previous_marker": previous["marker"],
         "previous_after_sha256": previous["after_sha256"],
         "previous_marker_removed": True,
         "previous_removed_sha256": current_sha,
         "previous_removed_confirmed_at": now_text(),
+    }
+
+
+def _guard_review_driven_retry(
+    fault, change_log: str, previous_result: str, run_dir: Path, run_id: str, attempt: int
+) -> dict:
+    """Reviewer 지적이 이번 재시도를 유발했다는 전제를 확인하고 그 사실을 기록으로 반환한다.
+
+    `OUTCOME_RETRY_EXHAUSTED` 는 Tester FAIL 이 예산을 소비하므로 직전 실패 결과가 근거다.
+    이 경로는 정반대다. Tester 는 매번 통과하고 **Reviewer 의 `CHANGES_REQUESTED` 가**
+    예산을 소비한다. (`CLAUDE.md §16`, `patchpilot.md §7-2`)
+
+    그래서 세 가지를 확인한다. 세 가지가 동시에 성립할 때만 "이번 재시도의 원인이 테스트
+    실패가 아니라 Reviewer 판정" 이라고 말할 수 있다.
+
+    1. 직전 Tester 결과가 `STATUS: PASS` 다. 실패가 없었으므로 예산을 소비할 실패 원인 분류가
+       존재하지 않는다. (`CLAUDE.md §14`, `§16`)
+    2. 현재 `review.md` 첫 줄이 `VERDICT: CHANGES_REQUESTED` 다. 이 파일은 회차마다
+       덮어써지므로, 지금 읽는 값이 직전 회차 Reviewer 의 판정이다.
+    3. change-log 가 Reviewer 지적을 재수정 근거로 적고 있다.
+
+    확인 결과를 dict 로 반환해 `fault-injection-N.md` 에 남긴다. `review.md` 는 덮어써져
+    나중에는 마지막 회차 값만 남으므로, **관측한 시점에 기록해 두지 않으면 사라지는 증거**다.
+
+    Raises:
+        EvalError: 세 조건 중 하나라도 어긋난 경우.
+    """
+    previous_status = first_line(previous_result)
+    if previous_status != "STATUS: PASS":
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: test-result-{attempt - 1}.md 첫 줄이 "
+            f"{previous_status!r} 입니다. 이 시나리오는 Tester 가 매번 통과하는 상태에서 "
+            f"Reviewer 지적만으로 예산이 소비되는 경로를 검증하므로, Tester 실패가 섞이면 "
+            f"어느 쪽이 예산을 소비했는지 구분할 수 없습니다."
+        )
+
+    review = read_run_file(run_dir, "review.md")
+    if review is None:
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: reports/{run_id}/review.md 가 없습니다. "
+            f"Reviewer {attempt - 1}차가 끝난 뒤에 주입해야 합니다."
+        )
+    verdict = first_line(review)
+    if verdict != "VERDICT: CHANGES_REQUESTED":
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: review.md 첫 줄이 {verdict!r} 입니다. "
+            f"Reviewer {attempt - 1}차가 CHANGES_REQUESTED 를 내지 않았다면 재시도 예산이 "
+            f"소비되지 않았고, 검증 대상 전이가 아닙니다."
+        )
+
+    referenced, detail = review_reference(change_log)
+    if not referenced:
+        raise EvalError(
+            f"{fault.FAULT_ID} 주입 전제 조건 위반: change-log-{attempt}.md 가 Reviewer 지적을 "
+            f"재수정 근거로 사용했다는 증거를 찾지 못했습니다. ({detail}) (`CLAUDE.md §16`)"
+        )
+
+    return {
+        "previous_test_status": previous_status,
+        "previous_review_verdict": verdict,
+        "previous_review_sha256": sha256_of(review),
+        "review_reference": detail,
+        "review_observed_at": now_text(),
     }
 
 
@@ -1126,6 +1437,125 @@ def _inject_code_fault(
         "injected_at": now_text(),
         **(evidence or {}),
     }
+
+
+def _fixture_source_of(scenario: Scenario, install_target: str) -> str | None:
+    """설치 경로에 대응하는 fixture 원본 내용을 반환한다. 대응이 없으면 None."""
+    for fixture_name, target in scenario.installs:
+        if target == install_target:
+            source = FIXTURES_DIR / fixture_name
+            return source.read_text(encoding="utf-8") if source.is_file() else None
+    return None
+
+
+def _inject_test_fault(
+    fault, scenario: Scenario, state: dict, run_id: str, *, attempt: int = 1
+) -> dict:
+    """설치된 테스트 fixture에 테스트를 덧붙이고 주입 기록을 반환한다.
+
+    제품 코드 주입(`_inject_code_fault`)과 절차는 같지만 대상이 테스트 파일이므로 안전
+    조건이 더 엄격하다. `CLAUDE.md §3-3` 은 테스트 약화를 금지하는데, 결함 주입 스스로가
+    그것을 저지르면 검증 대상 상황이 아니라 Harness 위반 상황이 되기 때문이다.
+
+    그래서 세 가지를 함께 요구한다. 대상이 이번 eval이 설치한 `sample-project/tests/` 안의
+    untracked 파일일 것, 주입 직전 내용이 설치 원본 fixture와 완전히 같을 것, 그리고 결함
+    정의의 `precheck_test` 도 같은 조건을 독립적으로 통과시킬 것.
+    """
+    target_path = fault.TARGET_PATH
+    target = _resolve_test_injection_target(target_path)
+    fixture_content = _fixture_source_of(scenario, target_path)
+
+    context = {
+        "target": target_path,
+        "installed": tuple(state.get("installed") or ()),
+        "tracked": is_tracked(target) if target.exists() else False,
+        "exists": target.is_file(),
+        "content": target.read_text(encoding="utf-8") if target.is_file() else None,
+        "fixture_content": fixture_content,
+    }
+    _guard_test_injection(context)
+
+    precheck_test = getattr(fault, "precheck_test", None)
+    if not callable(precheck_test):
+        raise EvalError(
+            f"{fault.FAULT_ID}: {FAULT_KIND_TEST_INJECTION} 결함에는 precheck_test 가 필요합니다."
+        )
+    try:
+        precheck_test(context)
+    except ValueError as error:
+        raise EvalError(str(error)) from error
+
+    before = context["content"] or ""
+    try:
+        after = fault.apply(before)
+    except ValueError as error:
+        raise EvalError(str(error)) from error
+    target.write_text(after, encoding="utf-8")
+
+    return {
+        "fault_id": fault.FAULT_ID,
+        "run_id": run_id,
+        "kind": FAULT_KIND_TEST_INJECTION,
+        "attempt": attempt,
+        "target": target_path,
+        "marker": fault.MARKER,
+        "before_sha256": sha256_of(before),
+        "after_sha256": sha256_of(after),
+        "fixture_sha256": sha256_of(fixture_content or ""),
+        "injected_at": now_text(),
+    }
+
+
+def _resolve_test_injection_target(target_path: str) -> Path:
+    """테스트 결함 주입 대상 경로를 `sample-project/tests/` 안으로만 해석한다.
+
+    결함 정의도 저장소 안의 텍스트 파일이므로 경로 자체를 신뢰하지 않는다.
+    `_resolve_removable_target` 과 같은 이유로 절대 경로·상위 경로 참조·심볼릭 링크를
+    모두 거부한다.
+    """
+    candidate = Path(target_path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise EvalError(f"주입 대상 경로가 안전하지 않습니다: {target_path}")
+    if not candidate.as_posix().startswith(TEST_INJECTION_ROOT):
+        raise EvalError(
+            f"{TEST_INJECTION_ROOT} 밖의 파일에는 테스트를 주입할 수 없습니다: {target_path}"
+        )
+
+    target = ROOT / candidate
+    if target.is_symlink():
+        raise EvalError(f"심볼릭 링크에는 주입하지 않습니다: {target_path}")
+
+    allowed_root = (ROOT / TEST_INJECTION_ROOT).resolve()
+    if allowed_root not in target.resolve().parents:
+        raise EvalError(
+            f"{TEST_INJECTION_ROOT} 밖의 파일에는 테스트를 주입할 수 없습니다: {target_path}"
+        )
+    return target
+
+
+def _guard_test_injection(context: dict) -> None:
+    """결함 정의와 별개로 Harness가 직접 확인하는 테스트 주입 안전 조건.
+
+    이번 eval의 setup이 설치한 untracked 테스트 파일에만, 설치 시점 내용 그대로일 때만
+    주입할 수 있다.
+    """
+    target = context["target"]
+    if not context["exists"]:
+        raise EvalError(f"주입 대상 파일이 없습니다: {target}")
+    if context["tracked"]:
+        raise EvalError(f"Git 추적 파일에는 주입하지 않습니다: {target}")
+    if target not in context["installed"]:
+        raise EvalError(
+            f"이번 eval이 설치한 파일에만 주입할 수 있습니다: {target} "
+            f"(설치 목록={list(context['installed'])})"
+        )
+    if context["fixture_content"] is None:
+        raise EvalError(f"설치 원본 fixture 를 찾지 못했습니다: {target}")
+    if context["content"] != context["fixture_content"]:
+        raise EvalError(
+            f"주입 대상이 설치 시점 fixture 와 다릅니다: {target} "
+            "(주입 전에 이미 테스트 파일이 수정되었습니다)"
+        )
 
 
 def _inject_resource_removal(fault, state: dict, run_id: str) -> dict:
@@ -1233,16 +1663,13 @@ def _fault_injection_report(fault, record: dict, scenario: Scenario) -> str:
 Developer {attempt}차 수정 완료 직후, Tester {attempt}차 실행 직전
 {_previous_removal_section(record)}
 ## 주입 목적
-Harness의 재시도 상태 전이를 실제 pytest 실패로 검증하기 위해 제품 코드에 결함을 만든다.
-`test-result-N.md` 의 문자열을 임의로 바꾸지 않고, Tester가 실제 실행 결과로 `STATUS: FAIL` 을
-기록하도록 만드는 것이 목적이다.
+{_injection_purpose_section(record, scenario)}
 
 ## 결함 내용
 {fault.DESCRIPTION}
 
 ## 주입 방식
-파일 끝에 후처리 래퍼를 덧붙인다. Developer {attempt}차가 함수 본문을 어떻게 구현했는지와 무관하게
-모듈 최상위에 `{fault.ANCHOR}` 정의만 존재하면 동일하게 적용되므로 주입 결과가 결정론적이다.
+{_injection_method_section(fault, record, attempt)}
 
 ## 주입된 코드
 ```python
@@ -1256,6 +1683,52 @@ Harness의 재시도 상태 전이를 실제 pytest 실패로 검증하기 위�
 | 주입 후 | `{record["after_sha256"]}` |
 
 {_removal_owner_section(record, scenario)}"""
+
+
+def _injection_purpose_section(record: dict, scenario: Scenario) -> str:
+    """이 결함이 무엇을 검증하려고 주입되었는지 남긴다."""
+    if scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+        return (
+            "Harness의 `REVIEW_CHANGES_REQUESTED_NO_BUDGET` 라우팅을 검증하기 위해,\n"
+            "테스트는 통과하지만 코드 품질 기준을 어기는 상태를 만든다.\n"
+            "Tester가 실패하면 예산을 소비한 주체가 Tester인지 Reviewer인지 구분할 수 없으므로,\n"
+            "이 결함은 반환값과 예외 동작을 한 글자도 바꾸지 않는다."
+        )
+    if record.get("kind") == FAULT_KIND_TEST_INJECTION:
+        return (
+            "Harness의 `TEST_DEFECT` 라우팅을 실제 pytest 실패로 검증하기 위해, 어떤 제품 코드\n"
+            "구현으로도 전체 테스트를 통과시킬 수 없는 상태를 만든다.\n"
+            "`test-result-N.md` 의 문자열을 임의로 바꾸지 않고, Tester가 실제 실행 결과로\n"
+            "`STATUS: FAIL` 을 기록하도록 만드는 것이 목적이다."
+        )
+    return (
+        "Harness의 재시도 상태 전이를 실제 pytest 실패로 검증하기 위해 제품 코드에 결함을 만든다.\n"
+        "`test-result-N.md` 의 문자열을 임의로 바꾸지 않고, Tester가 실제 실행 결과로 `STATUS: FAIL` 을\n"
+        "기록하도록 만드는 것이 목적이다."
+    )
+
+
+def _injection_method_section(fault, record: dict, attempt: int) -> str:
+    """어떤 방식으로 주입했는지 남긴다."""
+    rule = getattr(fault, "VIOLATED_RULE", None)
+    if rule:
+        return (
+            f"파일 끝에 코드를 덧붙인다. 반환값과 예외 동작은 그대로이므로 전체 테스트는 계속\n"
+            f"통과하고, 어긋나는 것은 다음 규칙 하나뿐이다.\n\n"
+            f"    {rule}\n\n"
+            f"모듈 최상위에 `{fault.ANCHOR}` 정의만 존재하면 동일하게 적용되므로 주입 결과가\n"
+            f"결정론적이다."
+        )
+    if record.get("kind") == FAULT_KIND_TEST_INJECTION:
+        return (
+            "설치된 테스트 fixture 끝에 테스트 함수 하나를 덧붙인다. 기존 테스트는 수정·삭제하지\n"
+            "않는다. 주입 직전 파일 내용이 설치 원본 fixture와 완전히 같을 때만 주입하므로,\n"
+            f"주입 결과는 `{fault.ANCHOR}` 가 존재하는 한 결정론적이다."
+        )
+    return (
+        f"파일 끝에 후처리 래퍼를 덧붙인다. Developer {attempt}차가 함수 본문을 어떻게 구현했는지와 무관하게\n"
+        f"모듈 최상위에 `{fault.ANCHOR}` 정의만 존재하면 동일하게 적용되므로 주입 결과가 결정론적이다."
+    )
 
 
 def _previous_removal_section(record: dict) -> str:
@@ -1286,6 +1759,25 @@ def _previous_removal_section(record: dict) -> str:
 def _removal_owner_section(record: dict, scenario: Scenario) -> str:
     """이 결함을 누가 제거해야 하는지(또는 아무도 제거하지 않는지)를 남긴다."""
     attempt = record.get("attempt", 1)
+    if scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+        return _review_removal_owner_section(record, scenario, attempt)
+    if record.get("kind") == FAULT_KIND_TEST_INJECTION:
+        return f"""
+## 제거 주체
+없음.
+
+`TEST_DEFECT` 는 재시도 예산을 소비하지 않고 즉시 종료하는 경로이므로(`CLAUDE.md §20`),
+Developer {attempt + 1}차가 호출되지 않는다. 따라서 이 테스트는 종료 시점까지 그대로 남아 있는
+것이 정상이다. Harness도 Agent도 테스트를 자동으로 고치지 않는다는 사실 자체가 이 eval이
+검증하는 대상이다. 주입된 테스트는 eval teardown이 테스트 fixture와 함께 통째로 제거한다.
+
+## 잔존 확인 방법
+`{record["target"]}` 의 내용이 설치 원본 fixture(`{record["fixture_sha256"]}`)에 주입 코드만
+덧붙인 상태(`{record["after_sha256"]}`)와 정확히 일치하는지 확인한다. 이 비교는 결함이 남아
+있다는 것과 기존 테스트가 하나도 약화되지 않았다는 것을 동시에 판정한다.
+`eval_harness.py assert` 가 이 항목을 자동으로 판정한다.
+"""
+
     if scenario.is_chained and attempt >= len(scenario.fault_ids):
         return f"""
 ## 제거 주체
@@ -1310,6 +1802,48 @@ Harness는 이 결함을 스스로 되돌리지 않는다. Harness가 자동으�
 Developer가 아니게 되어 `FAIL -> 분석 -> 재수정` 전이의 검증 의미가 사라진다.
 Developer {attempt + 1}차는 `test-result-{attempt}.md` 를 근거로 이 결함을 제품 코드 결함으로
 진단하고 제거해야 한다.
+
+## 제거 확인 방법
+`{record["target"]}` 에서 `{record["marker"]}` 표식이 사라지고 파일 내용이 실제로 바뀌었는지
+확인한다. `eval_harness.py assert` 가 이 항목을 자동으로 판정한다.
+"""
+
+
+def _review_removal_owner_section(record: dict, scenario: Scenario, attempt: int) -> str:
+    """Reviewer 예산 소진 경로에서 이 결함을 누가 제거하는지 남긴다.
+
+    재수정을 촉발하는 것이 Tester 실패가 아니라 Reviewer 지적이므로, 제거 근거로 가리켜야
+    하는 산출물도 `test-result-N.md` 가 아니라 `review.md` 다.
+    """
+    if attempt >= len(scenario.fault_ids):
+        return f"""
+## 제거 주체
+없음.
+
+Reviewer {attempt}차가 이 결함을 지적하는 순간 재시도 예산이 모두 소비되어
+(`retry_count = {scenario.expected_retry_budget} = retry_budget`) Developer {attempt + 1}차가
+호출되지 않는다. (`CLAUDE.md §16`, `patchpilot.md §7-2`) 따라서 이 결함은 종료 시점까지 제품
+코드에 남아 있는 것이 정상이며, 남아 있다는 사실 자체가 "예산 소진 이후 아무도 제품 코드를
+건드리지 않았다" 는 증거가 된다.
+결함은 eval teardown이 fixture 파일과 함께 통째로 제거한다.
+
+## 잔존 확인 방법
+`{record["target"]}` 에 `{record["marker"]}` 표식이 남아 있고 파일 해시가 주입 직후
+(`{record["after_sha256"]}`)와 같은지 확인한다. `eval_harness.py assert` 가 이 항목을 자동으로
+판정한다.
+"""
+
+    return f"""
+## 제거 주체
+Developer {attempt + 1}차.
+
+Harness는 이 결함을 스스로 되돌리지 않는다. Reviewer {attempt}차가 `CHANGES_REQUESTED` 를
+내면 재시도 예산 1회가 소비되고, Developer {attempt + 1}차가 `review.md` 의 지적사항을 근거로
+이 코드를 제거해야 한다. (`patchpilot.md §7-2`)
+
+주입 대상은 `plan.md` 의 수정 허용 파일 목록 **안** 이므로 `guard_plan_scope.py` 가 이 제거를
+막지 않는다. 범위 밖이었다면 Developer가 손댈 수 없어 실행이 `SCOPE_OUT_OF_PLAN` 으로
+끝났을 것이고, 그것은 검증 대상 종료 경로가 아니다.
 
 ## 제거 확인 방법
 `{record["target"]}` 에서 `{record["marker"]}` 표식이 사라지고 파일 내용이 실제로 바뀌었는지
@@ -1406,6 +1940,8 @@ def build_checks(
     # 기존 시나리오의 항목 이름과 순서를 건드리지 않기 위해 별도 경로로 분기한다.
     if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
         return _retry_exhausted_checks(run_dir, scenario, state, offline=offline)
+    if scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+        return _review_exhausted_checks(run_dir, scenario, state, offline=offline)
 
     checks: list[Check] = []
 
@@ -1738,6 +2274,222 @@ def _retry_exhausted_checks(
     return checks
 
 
+def _review_exhausted_checks(
+    run_dir: Path, scenario: Scenario, state: dict, *, offline: bool
+) -> list[Check]:
+    """Reviewer 지적으로 예산을 모두 소비하고 BLOCKED 로 끝나는 시나리오의 전이를 판정한다.
+
+    `_retry_exhausted_checks` 와 골격은 닮았지만 **판정 방향이 정반대**다. 그쪽은 시도마다
+    Tester 가 실패해야 하고, 이쪽은 시도마다 Tester 가 통과해야 한다. 같은 함수에 조건을
+    얹지 않고 따로 두는 이유가 그것이다. 한쪽의 기대값을 뒤집는 분기를 섞으면 두 시나리오
+    중 어느 것이 무엇을 검증하는지 코드에서 읽어낼 수 없게 된다.
+
+    각 시도에서 확인하는 것은 네 가지다.
+
+    1. Developer 가 직전 결함을 실제로 제거했는가 (주입 시점에 남긴 해시·표식 기록)
+    2. 그 뒤 주입된 결함이 **테스트를 깨뜨리지 않았는가** (`STATUS: PASS`)
+    3. 시도마다 서로 다른 결함이 주입됐는가 (같은 지적의 반복이 아님)
+    4. 재수정의 근거가 Tester 실패가 아니라 Reviewer 지적이었는가
+
+    마지막에는 예산 소진 이후 Developer 4차 / Tester 4차 / 4차 주입이 없었음을 확인한다.
+    Reviewer 산출물은 반대로 **있어야 한다.** 종료 사유의 근거가 `review.md` 이기 때문이다.
+    """
+    checks: list[Check] = []
+    injections = list(state.get("injections") or [])
+    total_attempts = scenario.expected_attempts
+
+    plan = read_run_file(run_dir, "plan.md")
+    checks.append(
+        Check("plan.md 존재", bool(plan and plan.strip()), "Planner 실행됨" if plan else "plan.md 없음")
+    )
+    plan_1 = read_run_file(run_dir, PLAN_SNAPSHOT_1)
+    checks.append(
+        Check(
+            "plan-1.md 스냅샷 존재",
+            bool(plan_1 and plan_1.strip()),
+            "Planner 1차 산출물 보존됨" if plan_1 else f"{PLAN_SNAPSHOT_1} 없음",
+        )
+    )
+
+    passed_statuses: list[bool] = []
+    seen_fault_ids: list[str] = []
+    for attempt in range(1, total_attempts + 1):
+        change_log = read_run_file(run_dir, f"change-log-{attempt}.md")
+        checks.append(
+            Check(
+                f"change-log-{attempt}.md 존재",
+                bool(change_log and change_log.strip()),
+                f"Developer {attempt}차 실행됨" if change_log else f"change-log-{attempt}.md 없음",
+            )
+        )
+
+        if attempt >= 2:
+            referenced, reference_detail = (
+                review_reference(change_log)
+                if change_log
+                else (False, f"change-log-{attempt}.md 없음")
+            )
+            checks.append(
+                Check(
+                    f"change-log-{attempt}.md 가 Reviewer 지적을 재수정 근거로 사용",
+                    referenced,
+                    reference_detail,
+                )
+            )
+            checks.append(_new_hypothesis_check(run_dir, attempt))
+            checks.append(_previous_fault_removed_check(injections, attempt, offline=offline))
+
+        report_name = scenario.fault_report_name(attempt)
+        fault_report = read_run_file(run_dir, report_name)
+        record = injections[attempt - 1] if len(injections) >= attempt else None
+        checks.append(
+            Check(
+                f"{report_name} 존재",
+                bool(fault_report and (record or offline)),
+                f"fault_id={record['fault_id']}"
+                if record
+                else (f"{report_name} 존재" if offline and fault_report else "결함 주입 기록 없음"),
+            )
+        )
+        checks.append(
+            Check(
+                f"{attempt}차 결함 주입이 Developer {attempt}차 이후에 이루어짐",
+                bool((record or (offline and fault_report)) and change_log),
+                f"change-log-{attempt}.md 와 {report_name} 이(가) 모두 존재",
+            )
+        )
+
+        # 주입 기록은 실행 중에만 있고 offline replay 에는 없다. 두 경우 모두에서 읽을 수
+        # 있도록 결함 식별자는 보존되는 산출물(`fault-injection-N.md`)에서 뽑는다.
+        fault_id = record["fault_id"] if record else section_value(fault_report or "", "Fault ID")
+        expected_fault_id = (
+            scenario.fault_ids[attempt - 1] if len(scenario.fault_ids) >= attempt else ""
+        )
+        checks.append(
+            Check(
+                f"{attempt}차 주입 결함이 {expected_fault_id}",
+                fault_id == expected_fault_id,
+                f"기록된 fault_id={fault_id!r}",
+            )
+        )
+        if attempt >= 2:
+            repeated = [
+                index + 1 for index, earlier in enumerate(seen_fault_ids) if earlier == fault_id
+            ]
+            checks.append(
+                Check(
+                    f"{attempt}차 주입 결함이 이전 시도와 다름",
+                    bool(fault_id) and not repeated,
+                    f"{fault_id} 이(가) {repeated}차에도 주입됨"
+                    if repeated
+                    else f"{fault_id} 은(는) {attempt}차에서 처음 주입됨",
+                )
+            )
+        seen_fault_ids.append(fault_id)
+
+        test_result = read_run_file(run_dir, f"test-result-{attempt}.md")
+        status_line = first_line(test_result) if test_result else ""
+        is_pass = status_line == "STATUS: PASS"
+        passed_statuses.append(is_pass)
+        checks.append(
+            Check(
+                f"test-result-{attempt}.md 첫 줄이 STATUS: PASS",
+                is_pass,
+                f"첫 줄: {status_line!r}" if test_result else f"test-result-{attempt}.md 없음",
+            )
+        )
+        has_command = bool(test_result and PYTEST_COMMAND in test_result)
+        checks.append(
+            Check(
+                f"test-result-{attempt}.md 에 고정 실행 명령 기록",
+                has_command,
+                f"`{PYTEST_COMMAND}` 기록됨" if has_command else "고정 실행 명령이 기록되지 않음",
+            )
+        )
+        # 주입된 결함이 테스트를 깨뜨리지 않았다는 것을 pytest 요약 줄로 확인한다.
+        # 첫 줄만 보면 Tester 가 `STATUS:` 를 잘못 적은 경우를 걸러내지 못한다.
+        failed = failed_test_names(test_result or "")
+        checks.append(
+            Check(
+                f"{attempt}차 주입 결함이 테스트를 깨뜨리지 않음",
+                is_pass and not failed,
+                "pytest 실패 0건"
+                if not failed
+                else f"pytest 실패 {len(failed)}건: {sorted(failed)}",
+            )
+        )
+
+    # 이 시나리오의 핵심 주장. 예산을 소비한 주체가 Tester 가 아니라 Reviewer 라는 것.
+    all_passed = len(passed_statuses) == total_attempts and all(passed_statuses)
+    checks.append(
+        Check(
+            "재시도 예산을 소비한 주체가 Reviewer 임",
+            all_passed,
+            f"Tester {total_attempts}회 모두 PASS -> 예산을 소비하는 실패 원인 분류가 한 번도 "
+            f"기록되지 않음. `CLAUDE.md §16` 의 예산 소비 항목 중 남는 것은 Reviewer 의 "
+            f"CHANGES_REQUESTED 뿐이다."
+            if all_passed
+            else f"Tester 결과 PASS 여부={passed_statuses}",
+        )
+    )
+
+    review = read_run_file(run_dir, "review.md")
+    verdict_line = first_line(review) if review else ""
+    checks.append(
+        Check(
+            "review.md 첫 줄이 VERDICT: CHANGES_REQUESTED",
+            verdict_line == "VERDICT: CHANGES_REQUESTED",
+            f"첫 줄: {verdict_line!r}" if review else "review.md 없음",
+        )
+    )
+
+    # 여기서부터는 **일어나지 않아야 하는 일** 을 판정한다.
+    unchanged = bool(plan and plan_1 and sha256_of(plan) == sha256_of(plan_1))
+    checks.append(
+        Check(
+            "Planner 2차가 호출되지 않음",
+            unchanged,
+            "plan.md 가 1차 주입 시점 스냅샷과 동일"
+            if unchanged
+            else f"plan-1 sha={sha256_of(plan_1)[:12] if plan_1 else None} / "
+            f"plan sha={sha256_of(plan)[:12] if plan else None}",
+        )
+    )
+    for artifact, actor in scenario.forbidden_artifacts:
+        content = read_run_file(run_dir, artifact)
+        name = (
+            f"{actor}이 이루어지지 않음"
+            if artifact.startswith("fault-injection")
+            else f"{actor}가 호출되지 않음"
+        )
+        extra_ok = offline or len(injections) == total_attempts
+        checks.append(
+            Check(
+                name,
+                content is None and extra_ok,
+                f"{artifact} 없음 / 주입 기록 {len(injections)}건"
+                if content is None
+                else f"{artifact} 존재 ({len(content)}자)",
+            )
+        )
+
+    checks.extend(_state_json_checks(run_dir, scenario))
+    checks.append(_last_fault_intact_check(injections, offline=offline))
+    checks.append(_test_not_weakened_check(scenario, offline=offline))
+    checks.append(_tracked_files_untouched_check(state, offline=offline))
+
+    report = read_run_file(run_dir, "report.md")
+    checks.append(
+        Check(
+            "report.md 존재",
+            bool(report and report.strip()),
+            "최종 보고서 존재" if report else "report.md 없음",
+        )
+    )
+    checks.append(_blocked_report_check(report, scenario))
+    return checks
+
+
 def _new_hypothesis_check(run_dir: Path, attempt: int) -> Check:
     """재시도한 Developer가 이전과 다른 가설을 세웠는지 판정한다. (`CLAUDE.md §16`)"""
     name = f"change-log-{attempt}.md 가 이전 시도와 다른 가설을 기록"
@@ -2047,15 +2799,34 @@ def _state_json_checks(run_dir: Path, scenario: Scenario) -> list[Check]:
         )
     )
 
-    if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
+    if (
+        scenario.outcome in (OUTCOME_RETRY_EXHAUSTED, OUTCOME_REVIEW_EXHAUSTED)
+        or scenario.verify_budget_untouched
+    ):
         # 예산 소진 시나리오에서는 예산 자체가 판정 대상이다. retry_count 가 예산에 도달했다는
         # 사실이 종료 사유(`RETRY_BUDGET_EXCEEDED`)의 근거이기 때문이다. (`CLAUDE.md §16`)
+        # 예산을 소비하지 않는 즉시 종료 경로에서는 반대 방향의 근거가 된다. 예산이 3으로
+        # 남아 있는데 retry_count 가 0이어야 "예산 판정을 지나가지 않고 끝났다" 가 성립한다.
         retry_budget = state_json.get("retry_budget")
         checks.append(
             Check(
                 f"state.json retry_budget == {scenario.expected_retry_budget}",
                 retry_budget == scenario.expected_retry_budget,
                 f"retry_budget={retry_budget!r}",
+            )
+        )
+
+    if scenario.verify_budget_untouched or scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+        # 예산 미소비 경로에서는 `UNKNOWN` 재시도도 쓰이지 않았다는 사실까지 확인해야
+        # 예산이 온전히 남았다고 말할 수 있다. (`patchpilot.md §5`)
+        # Reviewer 예산 소진 경로에서는 반대로, 소비된 3회가 `UNKNOWN` 재시도가 아니라
+        # 전부 Reviewer 지적이었다는 것을 좁히는 근거가 된다. (`CLAUDE.md §16`)
+        unknown_retry_used = state_json.get("unknown_retry_used")
+        checks.append(
+            Check(
+                "state.json unknown_retry_used == false",
+                unknown_retry_used is False,
+                f"unknown_retry_used={unknown_retry_used!r}",
             )
         )
 
@@ -2078,7 +2849,11 @@ def _state_json_checks(run_dir: Path, scenario: Scenario) -> list[Check]:
     )
 
     blocked_reason = state_json.get("blocked_reason")
-    if scenario.outcome in (OUTCOME_BLOCKED, OUTCOME_RETRY_EXHAUSTED):
+    if scenario.outcome in (
+        OUTCOME_BLOCKED,
+        OUTCOME_RETRY_EXHAUSTED,
+        OUTCOME_REVIEW_EXHAUSTED,
+    ):
         checks.append(
             Check(
                 f"state.json blocked_reason == {scenario.expected_blocked_reason}",
@@ -2103,6 +2878,31 @@ def _state_json_checks(run_dir: Path, scenario: Scenario) -> list[Check]:
         return checks
 
     checks.append(Check(attempts_name, True, f"시도 {expected_attempts}회 기록됨"))
+
+    if scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+        # 이 경로에서는 시도마다 Tester 가 통과했어야 한다. 하나라도 FAIL 이면 그 실패가
+        # 예산을 소비했을 수 있고, 그러면 종료 사유의 근거가 Reviewer 라고 말할 수 없다.
+        for index, attempt in enumerate(attempts):
+            category = attempt.get("failure_category")
+            checks.append(
+                Check(
+                    f"attempts[{index}] 이 PASS / 실패 원인 분류 없음",
+                    attempt.get("status") == "PASS" and not category,
+                    f"status={attempt.get('status')!r}, failure_category={category!r}",
+                )
+            )
+        # Reviewer 가 실제로 판정을 남겼다는 기록. `guard_stop_gate.py` G19 는 BLOCKED 에서
+        # APPROVED 를 금지할 뿐이므로, CHANGES_REQUESTED 인지는 여기서 확인한다.
+        review = state_json.get("review")
+        verdict = review.get("verdict") if isinstance(review, dict) else review
+        checks.append(
+            Check(
+                "state.json review.verdict == CHANGES_REQUESTED",
+                verdict == "CHANGES_REQUESTED",
+                f"review={review!r}",
+            )
+        )
+        return checks
 
     if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
         # 예산 소진은 시도 전부가 같은 사유로 실패했을 때만 성립한다. 하나라도 다르면
@@ -2160,10 +2960,57 @@ def _fault_state_check(scenario: Scenario, fault_record: dict | None, *, offline
 
     재시도 시나리오에서는 Developer 2차가 결함을 제거해야 하고, 즉시 종료 시나리오에서는
     아무도 되돌리지 않아야 한다.
+
+    즉시 종료 경로 안에서도 "되돌리지 않았다" 의 의미가 결함 유형마다 다르다. 삭제된
+    리소스는 다시 나타나지 않아야 하고, 주입된 테스트는 그대로 남아 있어야 한다. 분기 기준을
+    주입 기록이 아니라 시나리오 정의에서 얻는 이유는, 오프라인 replay 에는 주입 기록이 없어도
+    항목 이름을 결정할 수 있어야 하기 때문이다.
     """
     if scenario.outcome == OUTCOME_BLOCKED:
+        if fault_kind_of(load_fault(scenario.fault)) == FAULT_KIND_TEST_INJECTION:
+            return _injected_test_intact_check(scenario, fault_record, offline=offline)
         return _resource_still_removed_check(fault_record, offline=offline)
     return _fault_removed_check(fault_record, offline=offline)
+
+
+def _injected_test_intact_check(
+    scenario: Scenario, fault_record: dict | None, *, offline: bool = False
+) -> Check:
+    """주입된 모순 테스트가 그대로 남아 있고 기존 테스트도 그대로인지 판정한다.
+
+    표식이 남아 있는지만 보지 않고 **설치 원본 fixture + 주입 코드** 와 내용을 완전 비교한다.
+    표식 비교만으로는 "주입된 테스트는 남겨 두고 기존 테스트를 고친" 경우를 잡지 못한다.
+    완전 비교는 삭제·assertion 변경·skip 추가·rename 을 한 번에 배제한다. (`CLAUDE.md §21`)
+
+    `TEST_DEFECT` 경로에는 Developer 2차가 없다. 테스트가 바뀌어 있다면 누군가 자동으로
+    테스트를 고친 것이고, 그렇다면 `CLAUDE.md §20` 이 금지한 일이 일어난 것이다.
+    """
+    name = "주입된 모순 테스트가 그대로 남아 있고 기존 테스트가 변경되지 않음"
+    if offline:
+        return Check(name, True, OFFLINE_SKIP_DETAIL)
+    if not fault_record:
+        return Check(name, False, "결함 주입 기록이 없어 판정 불가")
+
+    target = ROOT / fault_record["target"]
+    if not target.is_file():
+        return Check(name, False, f"대상 파일이 없습니다: {fault_record['target']}")
+
+    source = target.read_text(encoding="utf-8")
+    fixture_content = _fixture_source_of(scenario, fault_record["target"])
+    if fixture_content is None:
+        return Check(name, False, f"설치 원본 fixture 를 찾지 못했습니다: {fault_record['target']}")
+
+    fault = load_fault(fault_record["fault_id"])
+    expected = fixture_content.rstrip("\n") + "\n" + fault.FAULT_CODE
+    matches = source == expected
+    return Check(
+        name,
+        matches,
+        "설치 원본 fixture + 주입 코드와 내용이 완전히 일치"
+        if matches
+        else f"내용 불일치 / 기대 sha={sha256_of(expected)[:12]} / "
+        f"실제 sha={sha256_of(source)[:12]} / 표식 존치={fault.MARKER in source}",
+    )
 
 
 def _resource_still_removed_check(fault_record: dict | None, *, offline: bool = False) -> Check:
@@ -2587,6 +3434,12 @@ def _scenario_definition_checks() -> list[Check]:
         for target in targets:
             seen_targets[target] = scenario_id
 
+        # 정의 파일이 없으면 여기서 멈춘다. 없는 결함 모듈을 열어 라우팅 정합성을 따지면
+        # `EvalError` 가 그대로 새어 나가, "검사 결과 FAIL" 이어야 할 것이 "검사를 못 했음" 으로
+        # 바뀐다. 바로 위 항목이 무엇이 없는지 이미 FAIL 로 기록했으므로 근거는 남아 있다.
+        if missing:
+            continue
+
         if scenario.replan_checks:
             fault = load_fault(scenario.fault)
             has_precheck = callable(getattr(fault, "precheck", None))
@@ -2604,6 +3457,8 @@ def _scenario_definition_checks() -> list[Check]:
             checks.extend(_blocked_scenario_definition_checks(scenario))
         if scenario.outcome == OUTCOME_RETRY_EXHAUSTED:
             checks.extend(_retry_exhausted_scenario_definition_checks(scenario))
+        if scenario.outcome == OUTCOME_REVIEW_EXHAUSTED:
+            checks.extend(_review_exhausted_scenario_definition_checks(scenario))
     return checks
 
 
@@ -2616,30 +3471,23 @@ def _blocked_scenario_definition_checks(scenario: Scenario) -> list[Check]:
     fault = load_fault(scenario.fault)
     install_targets = [target for _, target in scenario.installs]
     kind = fault_kind_of(fault)
-    has_precheck_fs = callable(getattr(fault, "precheck_fs", None))
     inside_installs = fault.TARGET_PATH in install_targets
-    inside_root = fault.TARGET_PATH.startswith(REMOVABLE_ROOT)
     forbidden = {artifact for artifact, _ in scenario.forbidden_artifacts}
     promoted = {*scenario.promoted_files, *scenario.extra_promoted_files}
+    expected_reason = BLOCKED_REASON_BY_CATEGORY.get(scenario.expected_category)
 
     return [
-        Check(
-            f"{scenario_id} 삭제 대상이 이번 eval이 설치한 리소스로 한정됨",
-            kind == FAULT_KIND_RESOURCE_REMOVAL
-            and has_precheck_fs
-            and inside_installs
-            and inside_root,
-            f"kind={kind} / precheck_fs={has_precheck_fs} / 설치 목록 포함={inside_installs} / "
-            f"대상={fault.TARGET_PATH}",
-        ),
+        _blocked_fault_scope_check(scenario_id, fault, kind, inside_installs),
         Check(
             f"{scenario_id} 기대 종료 상태가 즉시 종료 라우팅과 일치",
             scenario.expected_retry_count == 0
             and scenario.expected_attempts == 1
             and scenario.expected_final_status == "BLOCKED"
-            and scenario.expected_blocked_reason == scenario.expected_category,
+            and expected_reason is not None
+            and scenario.expected_blocked_reason == expected_reason,
             f"retry_count={scenario.expected_retry_count} / attempts={scenario.expected_attempts} / "
             f"final_status={scenario.expected_final_status} / "
+            f"category={scenario.expected_category!r} -> 기대 사유={expected_reason!r} / "
             f"blocked_reason={scenario.expected_blocked_reason!r}",
         ),
         Check(
@@ -2658,6 +3506,36 @@ def _blocked_scenario_definition_checks(scenario: Scenario) -> list[Check]:
             f"승격 필수={sorted(promoted)}",
         ),
     ]
+
+
+def _blocked_fault_scope_check(scenario_id: str, fault, kind: str, inside_installs: bool) -> Check:
+    """즉시 종료 시나리오의 결함이 이번 eval이 설치한 것만 건드리는지 확인한다.
+
+    결함 유형마다 "무엇을 건드리는가" 가 다르므로 판정 항목 이름도 다르다. 두 유형이 같은
+    이름을 쓰면 selftest 출력만 보고는 무엇이 검사됐는지 알 수 없다.
+    """
+    if kind == FAULT_KIND_TEST_INJECTION:
+        has_precheck_test = callable(getattr(fault, "precheck_test", None))
+        inside_root = fault.TARGET_PATH.startswith(TEST_INJECTION_ROOT)
+        return Check(
+            f"{scenario_id} 주입 대상이 이번 eval이 설치한 테스트 fixture로 한정됨",
+            has_precheck_test and inside_installs and inside_root,
+            f"kind={kind} / precheck_test={has_precheck_test} / "
+            f"설치 목록 포함={inside_installs} / {TEST_INJECTION_ROOT} 안={inside_root} / "
+            f"대상={fault.TARGET_PATH}",
+        )
+
+    has_precheck_fs = callable(getattr(fault, "precheck_fs", None))
+    inside_root = fault.TARGET_PATH.startswith(REMOVABLE_ROOT)
+    return Check(
+        f"{scenario_id} 삭제 대상이 이번 eval이 설치한 리소스로 한정됨",
+        kind == FAULT_KIND_RESOURCE_REMOVAL
+        and has_precheck_fs
+        and inside_installs
+        and inside_root,
+        f"kind={kind} / precheck_fs={has_precheck_fs} / 설치 목록 포함={inside_installs} / "
+        f"대상={fault.TARGET_PATH}",
+    )
 
 
 def _retry_exhausted_scenario_definition_checks(scenario: Scenario) -> list[Check]:
@@ -2726,6 +3604,86 @@ def _retry_exhausted_scenario_definition_checks(scenario: Scenario) -> list[Chec
         Check(
             f"{scenario_id} 승격 필수 목록에 존재하지 않을 산출물이 없음",
             not (promoted & forbidden),
+            f"승격 필수={sorted(promoted)}",
+        ),
+    ]
+
+
+def _review_exhausted_scenario_definition_checks(scenario: Scenario) -> list[Check]:
+    """Reviewer 예산 소진 시나리오의 정의가 운영 라우팅 규칙과 맞물려 있는지 확인한다.
+
+    이 경로에서 가장 쉽게 무너지는 전제는 두 가지다.
+
+    * 주입 대상이 `plan.md` 의 수정 허용 목록 **안** 이어야 한다. 밖이면 Developer 가 결함을
+      지우려는 순간 `guard_plan_scope.py` 가 쓰기를 막고, 실행은 `patchpilot.md §3` 의
+      `SCOPE_OUT_OF_PLAN` 으로 끝난다. 검증 대상 종료 경로가 아니다.
+    * 결함이 테스트를 깨뜨리면 안 된다. Tester 가 실패하는 순간 예산을 소비한 주체가
+      Reviewer 인지 Tester 인지 구분할 수 없다. 이 성질은 실행 중 `STATUS: PASS` 로 확인되며,
+      여기서는 결함 정의가 그 의도를 선언하고 있는지(`VIOLATED_RULE`)만 본다.
+    """
+    scenario_id = scenario.scenario_id
+    fault_ids = list(scenario.fault_ids)
+    faults = [load_fault(fault_id) for fault_id in fault_ids]
+    install_targets = [target for _, target in scenario.installs]
+    forbidden = {artifact for artifact, _ in scenario.forbidden_artifacts}
+    promoted = {*scenario.promoted_files, *scenario.extra_promoted_files}
+    links = [getattr(fault, "PREVIOUS_FAULT_ID", None) for fault in faults]
+    rules = [getattr(fault, "VIOLATED_RULE", None) for fault in faults]
+    next_attempt = scenario.expected_attempts + 1
+
+    return [
+        Check(
+            f"{scenario_id} 시도 수만큼 서로 다른 결함이 정의됨",
+            len(fault_ids) == scenario.expected_attempts and len(set(fault_ids)) == len(fault_ids),
+            f"시도={scenario.expected_attempts} / 결함={fault_ids}",
+        ),
+        Check(
+            f"{scenario_id} 결함이 순서대로 직전 결함을 가리킴",
+            links == [None, *fault_ids[:-1]],
+            f"PREVIOUS_FAULT_ID={links}",
+        ),
+        Check(
+            f"{scenario_id} 모든 결함이 계획 범위 안 전제를 스스로 검사",
+            all(callable(getattr(fault, "precheck", None)) for fault in faults)
+            and all(fault.TARGET_PATH in install_targets for fault in faults),
+            f"precheck={[callable(getattr(f, 'precheck', None)) for f in faults]} / "
+            f"대상={[f.TARGET_PATH for f in faults]}",
+        ),
+        Check(
+            f"{scenario_id} 결함이 테스트가 아니라 품질 기준을 어기도록 정의됨",
+            all(rules) and len(set(rules)) == len(rules),
+            f"VIOLATED_RULE={rules}",
+        ),
+        Check(
+            f"{scenario_id} Tester 실패를 기대하지 않음",
+            not scenario.expected_category and not scenario.expected_failing_token,
+            f"expected_category={scenario.expected_category!r} / "
+            f"expected_failing_token={scenario.expected_failing_token!r}",
+        ),
+        Check(
+            f"{scenario_id} 기대 종료 상태가 Reviewer 예산 소진 라우팅과 일치",
+            scenario.expected_retry_count == scenario.expected_retry_budget
+            and scenario.expected_attempts == scenario.expected_retry_budget
+            and scenario.expected_final_status == "BLOCKED"
+            and scenario.expected_blocked_reason == "REVIEW_CHANGES_REQUESTED_NO_BUDGET",
+            f"retry_count={scenario.expected_retry_count} / "
+            f"retry_budget={scenario.expected_retry_budget} / "
+            f"attempts={scenario.expected_attempts} / "
+            f"blocked_reason={scenario.expected_blocked_reason!r}",
+        ),
+        Check(
+            f"{scenario_id} 예산 소진 이후 산출물이 금지 목록에 정의됨",
+            forbidden
+            == {
+                f"change-log-{next_attempt}.md",
+                f"test-result-{next_attempt}.md",
+                f"fault-injection-{next_attempt}.md",
+            },
+            f"forbidden={sorted(forbidden)}",
+        ),
+        Check(
+            f"{scenario_id} 승격 필수 목록에 review.md 가 포함됨",
+            "review.md" in promoted and not (promoted & forbidden),
             f"승격 필수={sorted(promoted)}",
         ),
     ]
