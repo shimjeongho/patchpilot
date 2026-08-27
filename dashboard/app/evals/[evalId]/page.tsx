@@ -4,10 +4,33 @@ import { Timeline } from '@/components/Timeline'
 import { Badge, RetryGauge, Section, toneOf } from '@/components/Ui'
 import { getEval, getEvals } from '@/lib/evals'
 import { buildTimeline } from '@/lib/timeline'
-import { BUDGET_CONSUMING_CATEGORIES } from '@/lib/types'
+import { BUDGET_CONSUMING_CATEGORIES, type EvalState } from '@/lib/types'
 
 export function generateStaticParams() {
   return getEvals().map((item) => ({ evalId: item.id }))
+}
+
+/**
+ * 재시도 예산이 어떻게 쓰였는지 설명하는 한 줄.
+ *
+ * 성공 문구는 `finalStatus` 가 SUCCESS 일 때만 나온다. 사유 코드별 분기의 기본값으로 두면
+ * 새 종료 경로가 추가될 때마다 BLOCKED 로 끝난 실행에 "성공했습니다" 가 붙는다.
+ */
+function retryNote(state: EvalState): string {
+  switch (state.blockedReason) {
+    case 'RETRY_BUDGET_EXCEEDED':
+      return 'retry_count 가 retry_budget 에 도달해 추가 Agent 재호출 없이 종료했습니다. (CLAUDE.md §16)'
+    case 'ENVIRONMENT_ERROR':
+      return '실행 환경 오류이므로 재시도 예산을 소비하지 않고 즉시 종료했습니다. (CLAUDE.md §20)'
+    case 'TEST_DEFECT_NEEDS_HUMAN':
+      return '테스트 자체의 결함이므로 재시도 예산을 소비하지 않고 즉시 종료했습니다. 테스트를 자동으로 고치지 않고 사람의 판단을 기다립니다. (CLAUDE.md §20)'
+  }
+
+  if (state.finalStatus === 'SUCCESS') {
+    return `재시도 ${state.retryCount}회를 소비하고 성공했습니다.`
+  }
+
+  return `재시도 ${state.retryCount}회를 소비하고 BLOCKED로 종료했습니다. (사유: ${state.blockedReason ?? '미기록'})`
 }
 
 export default async function EvalDetailPage({
@@ -190,11 +213,7 @@ export default async function EvalDetailPage({
         <div className="card card--pad">
           <RetryGauge count={state.retryCount} budget={state.retryBudget} />
           <p className="note">
-            {state.blockedReason === 'RETRY_BUDGET_EXCEEDED'
-              ? 'retry_count 가 retry_budget 에 도달해 추가 Agent 재호출 없이 종료했습니다. (CLAUDE.md §16)'
-              : state.blockedReason === 'ENVIRONMENT_ERROR'
-                ? '실행 환경 오류이므로 재시도 예산을 소비하지 않고 즉시 종료했습니다. (CLAUDE.md §20)'
-                : `재시도 ${state.retryCount}회를 소비하고 성공했습니다.`}
+            {retryNote(state)}
           </p>
         </div>
       </Section>
