@@ -1353,8 +1353,36 @@ Agent를 실행하지 않고 수 초 안에 다음을 확인한다.
 uv run pytest evals/tests -q
 ```
 
-검증 대상은 G1~G19 각각의 정상/위반 경계, fail-open 조건, reason 계약,
+검증 대상은 G1~G21 각각의 정상/위반 경계, fail-open 조건, reason 계약,
 `main()` 의 stdout JSON + exit 0 전달 계약이다.
+
+`G20~G21` 은 `UNKNOWN_TWICE` 종료 선언이 그 경로를 실제로 지나온 상태인지 대조한다.
+`unknown_retry_used` 가 참인지(G20), `attempts` 에 `UNKNOWN` 실패가 2건 이상이고 마지막
+시도가 `FAIL` / `UNKNOWN` 인지(G21)를 본다. `patchpilot.md §5` 의 UNKNOWN 분기는 시도
+번호를 보지 않으므로 `attempts` 길이나 `retry_count` 를 특정 숫자로 못박지 않는다.
+1차 `PRODUCT_CODE_DEFECT` -> 2차 `UNKNOWN` -> 3차 `UNKNOWN` 도 정상 경로이기 때문이다.
+`test-result-N.md` 에서 실패 원인 분류를 다시 파싱하지도 않는다. (`CLAUDE.md §25`)
+
+이 경로는 아직 **Live Eval 로 검증되지 않았다.** `UNKNOWN` 은 저장소 상태가 아니라 Tester 의
+확신 부재를 가리키는 fallback 분류라서(`tester.md §3`), 특정 verdict 를 강제하는 결정론적
+fixture 를 만들 수 없다. G20~G21 이 보강한 것은 유발 가능성이 아니라 **관측성** 이다.
+
+`UNKNOWN_TWICE` 는 세 층을 구분해서 읽는다. 셋을 뭉뚱그리면 "구현했다"와 "검증했다"가 섞인다.
+
+| 층 | 상태 |
+| --- | --- |
+| 라우팅 계약 (`CLAUDE.md §16` · `§20`, `patchpilot.md §5`) | 구현됨 |
+| Stop Gate 관측성 (`G20` · `G21` + `evals/tests/test_guard_stop_gate.py`) | 구현됨 |
+| 결정론적 Live Eval | **미검증** — 현재 계약에서 불가능 |
+
+Tester 에게 `UNKNOWN` 판정을 지시하면 실행은 만들 수 있지만, 그 순간 검증 대상이던 Agent 의
+분류 능력이 검증에서 빠진다. 강제된 verdict 로 만든 실행을 "경로를 검증했다"고 기록하지 않기 위해
+`SCENARIOS` 에 `harness-eval-007` 을 만들지 않고 미검증 상태를 유지한다.
+그 결과 `harness_audit.py` 의 `E4b` 는 FAIL(-2점)로 남고, 검증된 종료 경로는 **7개 중 6개** 다.
+이 감점은 결함이 아니라 의도된 기록이다.
+
+상태를 바꾸려면 `CLAUDE.md §14` 의 `UNKNOWN` 정의를 저장소 상태로 판정 가능한 조건으로 좁혀야
+하고, 그것은 분류 계약 변경이므로 이 문서가 아니라 rubric 버전과 함께 다룬다.
 
 다음 항목은 **필수 회귀 계약**이다. 지우면 무한 루프가 열린다.
 

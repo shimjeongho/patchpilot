@@ -590,7 +590,32 @@ Tester가 새롭게 추가한 테스트 역시 Reviewer의 `git diff` 검토 대
 * [x] Dashboard 구조 검증 표시 — Audit 결과와 Eval 결과를 분리해 시각화 (`dashboard/`)
 * [ ] `PreToolUse` Hook — `reports/<run-id>/` 쓰기 주체 제한 (state.json / report.md는 Orchestrator만)
 * [x] CI 워크플로 — 단위 테스트 / selftest / audit 세 검증기를 모두 실행 (`.github/workflows/ci.yml`, Audit check G1)
-* [ ] 종료 경로 7개 전부에 대한 결정론적 Eval (Audit check E4b)
+* [ ] 종료 경로 7개 전부에 대한 결정론적 Eval (Audit check E4b) — 7개 중 6개 완료
+
+### 현재 검증 상태 (2026-08-27 기준)
+
+| 항목 | 값 |
+| --- | --- |
+| Harness Eval 시나리오 | `HARNESS-EVAL-001` ~ `006` 완료 · 대표 결과 6건 보존 |
+| E4b Live Verified | **6 / 7** — 미검증 경로는 `UNKNOWN_TWICE` 하나 |
+| Stop Gate 불변식 | `G1~G21` (`G20` · `G21` 이 `UNKNOWN_TWICE` 종료 선언을 대조) |
+| Audit check E4b | **FAIL** |
+| Harness Audit | **PASS** · 98 / 100 · Critical 0 |
+
+`UNKNOWN_TWICE` 는 세 층을 구분해서 읽습니다.
+
+1. **라우팅 계약** (§16 · §20, `patchpilot.md §5`) — 구현되어 있습니다.
+2. **Stop Gate 관측성** (`G20` · `G21`, §25) — 구현되어 있습니다. 종료가 선언되면 그 실행이 실제로 그 경로를 지나왔는지 산출물로 대조합니다.
+3. **결정론적 Live Eval** — **미검증 상태를 의도적으로 유지합니다.**
+
+3번의 이유는 실행 실패가 아닙니다. §14 의 `UNKNOWN` 은 저장소 상태가 가리키는 분류가 아니라
+Tester 가 다른 넷 중 어디에도 확신할 수 없을 때 쓰는 fallback 분류입니다(`tester.md §3`).
+따라서 fixture 와 결함 주입으로 저장소를 특정 상태에 놓는 것만으로는 유발할 수 없고,
+Tester 에게 판정을 지시하면 검증 대상이던 분류 능력 자체가 검증에서 빠집니다.
+verdict 를 강제해 만든 실행을 "경로를 검증했다"고 기록하지 않기 위해 E4b 의 감점 2점을 남겨 둡니다.
+
+이 상태를 바꾸려면 §14 의 `UNKNOWN` 정의를 저장소 상태로 판정 가능한 조건으로 좁혀야 하며,
+그것은 분류 계약 변경이므로 `rubric_version` 과 함께 별도로 다룹니다.
 
 CI 워크플로는 `main` push · `main` 대상 PR · 수동 실행에서 `verify` 와 `dashboard` 두 job 을 병렬로 돌립니다.
 `verify` 는 세 검증기와 §10 고정 테스트 명령을, `dashboard` 는 typecheck 와 build 를 실행합니다.

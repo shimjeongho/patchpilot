@@ -11,17 +11,17 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 | 검증 층 | 무엇을 보는가 | 현재 결과 |
 | --- | --- | --- |
 | **Harness Audit** (구조 검증) | 저장소가 선언한 통제 계약이 실제로 갖춰져 있고 서로 모순되지 않는가 | `PASS` · 98 / 100 · Critical 0 |
-| **Harness Eval** (실행 검증) | 결함을 주입했을 때 Harness가 실제로 어떤 상태 전이를 거치는가 | 4 시나리오 · 147 / 147 항목 |
+| **Harness Eval** (실행 검증) | 결함을 주입했을 때 Harness가 실제로 어떤 상태 전이를 거치는가 | 6 시나리오 · 235 / 235 항목 |
 
 두 층의 검증기는 GitHub Actions에서도 자동 실행됩니다. `main` push · `main` 대상 PR · 수동 실행(`workflow_dispatch`)에서 단위 테스트 · `sample-project` 테스트 · `selftest` · Harness Audit이 돌고, Dashboard의 typecheck와 build가 별도 job으로 함께 돕니다. 러너는 `ubuntu-latest` 하나이므로 **CI 통과는 Linux 러너에서 검증기가 통과했다는 사실이며, 모든 실행 환경을 보장하지 않습니다.**
 
 **🔗 Dashboard Live Demo — https://patchpilot-five.vercel.app**
 
-실제 Harness 실행 결과(Fault Injection Eval 4종)의 상태 전이와 Agent 산출물을 브라우저에서 바로 확인할 수 있습니다.
+실제 Harness 실행 결과(Fault Injection Eval 6종)의 상태 전이와 Agent 산출물을 브라우저에서 바로 확인할 수 있습니다.
 
 [![PatchPilot Dashboard Overview](docs/images/dashboard-overview.png)](https://patchpilot-five.vercel.app)
 
-<sub>Eval 4종의 최종 상태 · 소비한 재시도 예산 · 자동 검증 통과 수를 한 화면에서 보여줍니다. 모든 수치는 `reports/examples/` 의 `state.json` 과 `eval-result.md` 에서 빌드 타임에 읽은 값입니다. 이미지를 클릭하면 Live Demo로 이동합니다.</sub>
+<sub>Eval 6종의 최종 상태 · 소비한 재시도 예산 · 자동 검증 통과 수를 한 화면에서 보여줍니다. 모든 수치는 `reports/examples/` 의 `state.json` 과 `eval-result.md` 에서 빌드 타임에 읽은 값입니다. 이미지를 클릭하면 Live Demo로 이동합니다.</sub>
 
 ---
 
@@ -165,7 +165,7 @@ Orchestrator는 메인 Claude Code 세션이 `/patchpilot` 커스텀 커맨드�
 
 Orchestrator가 `state.json`에 종료 상태를 선언하는 순간, Claude Code의 `Stop` lifecycle hook에서 그 선언과 `reports/<run-id>/` 실제 산출물을 대조합니다. **오케스트레이터의 종료 선언을 산출물의 결정론적 불변식과 대조하고, 불일치 시 종료 직전에 한 번의 교정 기회를 만듭니다.**
 
-검사하는 것은 "정답"이 아니라 **자기 산출물과의 일치**입니다. 예를 들어 `final_status: "SUCCESS"`인데 `review.md`가 없거나, 마지막 `test-result-N.md`의 첫 줄이 `STATUS: PASS`가 아니거나, `blocked_reason: "RETRY_BUDGET_EXCEEDED"`인데 `retry_count < retry_budget`인 경우입니다. 총 19개(G1~G19)이며, 모두 파일 내용만으로 결정되고 추론이 필요 없는 항목입니다.
+검사하는 것은 "정답"이 아니라 **자기 산출물과의 일치**입니다. 예를 들어 `final_status: "SUCCESS"`인데 `review.md`가 없거나, 마지막 `test-result-N.md`의 첫 줄이 `STATUS: PASS`가 아니거나, `blocked_reason: "RETRY_BUDGET_EXCEEDED"`인데 `retry_count < retry_budget`인 경우입니다. 총 21개(G1~G21)이며, 모두 파일 내용만으로 결정되고 추론이 필요 없는 항목입니다.
 
 반대로 다음은 **의도적으로 검사하지 않습니다.** 산출물만으로는 정확히 판정할 수 없어 오탐이 나기 때문입니다.
 
@@ -182,7 +182,7 @@ Orchestrator가 `state.json`에 종료 상태를 선언하는 순간, Claude Cod
 
 Stop hook은 차단 이후 이어진 턴이 끝날 때 `stop_hook_active=true`로 **다시 호출됩니다.** Gate는 그 재진입 호출을 무조건 통과시켜, 한 user prompt 안에서 종료 차단이 반복되지 않도록 합니다. 이 1회 제한은 런타임이 아니라 `guard_stop_gate.py`의 분기가 직접 보장합니다.
 
-따라서 Stop Gate는 "올바를 때까지 막는 장치"가 아니라 **종료 직전 한 번의 교정 기회를 만드는 장치**입니다. 최종 상태의 신뢰성은 이 게이트 하나가 아니라 `/patchpilot` 절차의 단계별 첫 줄 기계 판정, `PreToolUse` Hook 3종, 결정론적 Eval 4종이 함께 만듭니다.
+따라서 Stop Gate는 "올바를 때까지 막는 장치"가 아니라 **종료 직전 한 번의 교정 기회를 만드는 장치**입니다. 최종 상태의 신뢰성은 이 게이트 하나가 아니라 `/patchpilot` 절차의 단계별 첫 줄 기계 판정, `PreToolUse` Hook 3종, 결정론적 Eval 6종이 함께 만듭니다.
 
 > Claude Code는 정책적 차단도 `"Stop hook error occurred · ctrl+o to see"`로 표시합니다. Hook 실행 오류와 **같은 UI 문구**를 쓰므로, 이 메시지가 보인다고 해서 Hook이 고장 난 것은 아닙니다. 게이트가 정상 동작한 결과일 수 있습니다.
 
@@ -261,7 +261,7 @@ uv run pytest sample-project/tests -q
 | BUG-003 | 동전 단위 정산 · 다중 결함 | SUCCESS | 1 | 0 |
 | BUG-004 | 정산 대조 · 이체 잔액 | SUCCESS | 1 | 0 |
 
-<sub>이 네 건의 운영 실행 산출물은 `reports/` gitignore 정책에 따라 저장소에 포함되지 않습니다. 저장소에 공개된 검증 증거는 `reports/examples/` 에 보존된 EVAL-001~004 대표 결과입니다.</sub>
+<sub>이 네 건의 운영 실행 산출물은 `reports/` gitignore 정책에 따라 저장소에 포함되지 않습니다. 저장소에 공개된 검증 증거는 `reports/examples/` 에 보존된 EVAL-001~006 대표 결과입니다.</sub>
 
 네 건 모두 `STATUS: PASS` + `VERDICT: APPROVED`로 `SUCCESS` 판정을 받았습니다.
 
@@ -332,9 +332,9 @@ Eval은 결정론적이어야 하는데, **판정 코드가 Agent의 문장 표�
 
 ## 💉 Fault Injection Eval
 
-### 검증한 상태 전이 4종
+### 검증한 상태 전이 6종
 
-FAIL 라우팅 5종 중 **4종의 종료 경로**를 실제 Agent 실행으로 검증했습니다. 아래 수치는 모두 `reports/examples/` 에 보존된 대표 결과에서 읽은 값입니다.
+`CLAUDE.md §16` · `§20` 이 정의하는 종료 경로는 7개이고, 그중 **6개**를 실제 Agent 실행으로 검증했습니다. 아래 수치는 모두 `reports/examples/` 에 보존된 대표 결과에서 읽은 값입니다.
 
 | Eval | 검증 대상 전이 | 최종 상태 | retry_count | 자동 검증 |
 | --- | --- | --- | --- | --- |
@@ -342,8 +342,12 @@ FAIL 라우팅 5종 중 **4종의 종료 경로**를 실제 Agent 실행으로 �
 | HARNESS-EVAL-002 | `PLAN_DEFECT` → 재계획 → 성공 | SUCCESS | 1 / 3 | **37 / 37** |
 | HARNESS-EVAL-003 | `ENVIRONMENT_ERROR` → 즉시 종료 | BLOCKED | 0 / 3 | **28 / 28** |
 | HARNESS-EVAL-004 | 재시도 예산 소진 → 종료 | BLOCKED | 3 / 3 | **55 / 55** |
+| HARNESS-EVAL-005 | `TEST_DEFECT` → 즉시 종료 | BLOCKED | 0 / 3 | **31 / 31** |
+| HARNESS-EVAL-006 | Reviewer `CHANGES_REQUESTED` 예산 소진 → 종료 | BLOCKED | 3 / 3 | **57 / 57** |
 
-네 Eval 모두 teardown 후 `sample-project/`가 실행 전 상태로 복구되었고 기존 테스트 57개가 그대로 통과했습니다.
+여섯 Eval 모두 teardown 후 `sample-project/`가 실행 전 상태로 복구되었고 기존 테스트 57개가 그대로 통과했습니다. 자동 검증 항목 합계는 **235 / 235** 입니다.
+
+검증되지 않은 나머지 한 경로는 `UNKNOWN` 2회 종료(`UNKNOWN_TWICE`)입니다. 이 경로를 결정론적 Eval로 만들지 않은 이유는 [아래](#7-unknown-2회--미검증-경로)에 적었습니다.
 
 ---
 
@@ -452,6 +456,63 @@ Developer 3차(C 제거) → 결함 D 주입 → Tester 3차 FAIL / PRODUCT_CODE
 
 대표 결과: [`reports/examples/EVAL-20260820-1752-HARNESS-EVAL-004/`](reports/examples/EVAL-20260820-1752-HARNESS-EVAL-004/)
 
+#### 5. `TEST_DEFECT` — HARNESS-EVAL-005
+
+`CLAUDE.md §20`은 `TEST_DEFECT`에서 **자동으로 테스트를 고치는 것을 금지**합니다. 이 Eval이 검증하는 것은 Harness가 막혔을 때 스스로 풀려고 시도하지 않고 **막혔다고 보고하는가**입니다.
+
+결함은 제품 코드가 아니라 fixture 테스트에 주입됩니다. 기존 테스트가 `apply_coupon(1000, 3) == [334, 333, 333]`(앞에서부터 분배)을 요구하는 상태에서, 주입된 테스트가 같은 입력에 `[333, 333, 334]`를 요구합니다. index 0이 334이면서 동시에 333일 수는 없으므로 Developer를 몇 번 다시 불러도, 계획 범위를 넓혀도 해소되지 않습니다.
+
+| 항목 | 결과 |
+| --- | --- |
+| Planner / Developer / Tester / Reviewer 실행 | **1 / 1 / 1 / 0** |
+| Tester 1차 | `STATUS: FAIL` — **1 failed, 69 passed** / `TEST_DEFECT` |
+| retry_count / retry_budget | **0 / 3** — 예산을 소비하지 않음 |
+| `state.json` | `final_status = BLOCKED`, `blocked_reason = TEST_DEFECT_NEEDS_HUMAN`, `review.verdict` 없음 |
+| 미호출 증거 | `change-log-2.md` / `test-result-2.md` / `review.md` 부재 |
+| 자동 검증 | **31 / 31 PASS** |
+| 복구 | teardown 후 기존 테스트 **57 passed** |
+
+Tester에게 `TEST_DEFECT`라는 분류를 프롬프트로 알려주지 않았습니다. 분류는 Tester가 실행 결과만 보고 스스로 내린 것입니다.
+
+대표 결과: [`reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/`](reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/)
+
+#### 6. Reviewer `CHANGES_REQUESTED` 예산 소진 — HARNESS-EVAL-006
+
+앞의 다섯 경로는 모두 Tester의 `STATUS: FAIL`에서 출발합니다. 이 경로만 **테스트가 세 번 모두 PASS인 상태에서** 종료됩니다. `CLAUDE.md §16`은 Reviewer의 `CHANGES_REQUESTED` 1회도 재시도 예산 1회를 소비한다고 정하고 있고, 이 Eval은 그 조항이 실제 실행에서 지켜지는지를 봅니다.
+
+결함은 계획 범위 **안**에 주입됩니다. 범위 밖이면 `guard_plan_scope.py`가 먼저 막아 Reviewer까지 도달하지 못하기 때문입니다. 세 라운드의 지적 사유는 서로 다릅니다 — 디버깅용 `print()` 잔존, 죽은 helper 잔존, `except Exception: pass`.
+
+| 항목 | 결과 |
+| --- | --- |
+| Planner / Developer / Tester / Reviewer 실행 | **1 / 3 / 3 / 3** |
+| Tester 1~3차 | **세 번 모두 `STATUS: PASS`** |
+| Reviewer 1~3차 | 세 번 모두 `VERDICT: CHANGES_REQUESTED` (사유 각각 다름) |
+| retry_count / retry_budget | **3 / 3** |
+| `state.json` | `final_status = BLOCKED`, `blocked_reason = REVIEW_CHANGES_REQUESTED_NO_BUDGET`, `attempts` 3건 모두 `PASS` |
+| 미호출 증거 | `change-log-4.md` / `test-result-4.md` / `fault-injection-4.md` 부재 |
+| 자동 검증 | **57 / 57 PASS** |
+| 복구 | teardown 후 기존 테스트 **57 passed** |
+
+Reviewer에게 기대 판정을 알려주지 않았습니다. `VERDICT`는 Reviewer가 `git diff`만 보고 내린 것입니다.
+
+대표 결과: [`reports/examples/EVAL-20260827-1219-HARNESS-EVAL-006/`](reports/examples/EVAL-20260827-1219-HARNESS-EVAL-006/)
+
+#### 7. `UNKNOWN` 2회 — 미검증 경로
+
+일곱 번째 종료 경로인 `UNKNOWN_TWICE`는 **결정론적 Live Eval을 만들지 않았습니다.** 실패해서 만들지 못한 것이 아니라, 현재 계약에서는 만들 수 없다고 판단해 미검증 상태를 그대로 남긴 것입니다.
+
+`UNKNOWN`은 저장소 상태가 가리키는 분류가 아니라 **Tester의 확신 부재를 가리키는 fallback 분류**입니다(`.claude/agents/tester.md §3`). 앞의 여섯 경로는 fixture와 결함 주입으로 저장소를 특정 상태에 놓으면 분류가 따라오지만, `UNKNOWN`은 그렇지 않습니다. Tester가 `UNKNOWN`을 내도록 강제하려면 판정 자체를 지시해야 하고, 그 순간 검증 대상이던 Agent의 분류 능력이 검증에서 빠집니다. 강제된 verdict를 근거로 "경로를 검증했다"고 말하는 것은 사실이 아닙니다.
+
+대신 **관측성**을 보강했습니다. Stop Gate에 `G20` · `G21`을 추가해, `UNKNOWN_TWICE` 종료가 선언되면 그 실행이 실제로 그 경로를 지나왔는지 산출물로 대조합니다.
+
+| 층 | `UNKNOWN_TWICE` 상태 |
+| --- | --- |
+| 라우팅 계약 (`CLAUDE.md §16` · `§20`, `patchpilot.md §5`) | 구현됨 |
+| Stop Gate 불변식 `G20` · `G21` + 단위 테스트 | 구현됨 |
+| 결정론적 Live Eval | **미검증** — 현재 계약에서 불가능 |
+
+그래서 Audit의 `E4b`는 지금도 **FAIL**이고 점수는 **98 / 100**입니다. 이 감점은 남겨 둡니다. 근거 없이 지우는 것보다 검증되지 않았다고 말하는 편이 정확하기 때문입니다.
+
 ### 결함 주입 방식
 
 이 Eval에서 가장 중요한 원칙은 **`test-result-N.md`의 `STATUS:` 문자열을 임의로 `FAIL`로 바꾸지 않는다**는 것입니다. 그렇게 하면 검증되는 것은 문자열 처리 로직뿐이고, 실제 테스트 실행 경로는 여전히 검증되지 않습니다.
@@ -482,16 +543,20 @@ def split_tip(bill: int, people: int, tip_percent: int) -> list[int]:
 evals/
 ├── README.md                     실행 절차 · 설계 결정 · 자동 검증 항목
 ├── eval_harness.py               setup / inject / assert / finish / teardown / promote / selftest
-├── fixtures/                     Eval 전용 고정 Task 4개 + 제품 모듈·테스트
+├── fixtures/                     Eval 전용 고정 Task 6개 + 제품 모듈·테스트
 │   ├── HARNESS-EVAL-001.md       PRODUCT_CODE_DEFECT      tip.py / test_tip.py
 │   ├── HARNESS-EVAL-002.md       PLAN_DEFECT              service_charge.py / charge_rounding.py + 테스트 2개
 │   ├── HARNESS-EVAL-003.md       ENVIRONMENT_ERROR        conftest + settlement_runtime.json
-│   └── HARNESS-EVAL-004.md       RETRY_BUDGET_EXCEEDED    installment.py / test_installment.py
+│   ├── HARNESS-EVAL-004.md       RETRY_BUDGET_EXCEEDED    installment.py / test_installment.py
+│   ├── HARNESS-EVAL-005.md       TEST_DEFECT              coupon.py / test_coupon.py
+│   └── HARNESS-EVAL-006.md       REVIEW_CHANGES_REQUESTED refund.py / test_refund.py
 └── faults/
     ├── retry_001.py              계획 범위 안 결함 (코드 주입)
     ├── plan_defect_001.py        계획 범위 밖 결함 (코드 주입)
     ├── env_error_001.py          런타임 리소스 삭제
-    └── retry_budget_001~003.py   서로 다른 요구사항을 깨는 결함 3종 (연쇄 주입)
+    ├── retry_budget_001~003.py   서로 다른 요구사항을 깨는 결함 3종 (연쇄 주입)
+    ├── test_defect_001.py        기존 테스트와 모순되는 테스트 주입
+    └── review_budget_001~003.py  Reviewer가 지적할 컨벤션 위반 3종 (연쇄 주입)
 ```
 
 fixture는 `sample-project/`에 **평소에 존재하지 않습니다.** `setup`이 설치하고 `teardown`이 제거합니다.
@@ -591,7 +656,7 @@ Guard를 만들어 두고 `settings.json`에 등록하지 않으면 그 Guard는
 
 남은 감점 한 건은 숨기지 않았습니다.
 
-- **E4b (-2)** — 종료 경로 7개 중 4개만 결정론적 Eval로 검증되어 있습니다. `TEST_DEFECT` · `UNKNOWN` 2회 · Reviewer `CHANGES_REQUESTED` 경로가 남았습니다.
+- **E4b (-2)** — 종료 경로 7개 중 6개가 결정론적 Eval로 검증되어 있습니다. 남은 것은 `UNKNOWN` 2회 경로 하나이며, [현재 계약에서는 결정론적으로 만들 수 없다고 판단해](#7-unknown-2회--미검증-경로) 미검증 상태로 둡니다.
 
 자기 저장소를 채점하는 도구가 자기에게 만점을 주면 그 점수는 아무 의미가 없습니다. 이 감점이 그대로 남아 있는 것이 이 Audit이 장식이 아니라는 증거입니다. 단위 테스트가 33개 check 전부에 **FAIL을 만들어내는 반증 사례**를 요구하는 것도 같은 이유입니다.
 
@@ -601,7 +666,7 @@ Guard를 만들어 두고 `settings.json`에 등록하지 않으면 그 Guard는
 
 > **거짓말이면 Critical, 미완성이면 감점.**
 
-종료 경로 Eval이 7개 중 4개뿐인 것은 미완성이므로 감점입니다. 반면 다음은 문서가 사실과 다른 말을 하는 경우이므로, 점수가 아무리 높아도 `verdict`는 `FAIL`이 됩니다.
+종료 경로 Eval이 7개 중 6개인 것은 미완성이므로 감점입니다. 반면 다음은 문서가 사실과 다른 말을 하는 경우이므로, 점수가 아무리 높아도 `verdict`는 `FAIL`이 됩니다.
 
 - `GUARD_NOT_ENFORCED` — Guard 파일은 있는데 `settings.json`에 등록되지 않음 (등록되지 않은 Guard는 전혀 동작하지 않습니다)
 - `STOP_GATE_SHAPE_INVALID` — `Stop` 훅이 평면형으로 등록됨 (오류 없이 무시되는 무증상 실패 모드입니다)
@@ -638,7 +703,7 @@ PatchPilot에서 독자적으로 설계한 부분은 다음입니다.
 - 같은 값을 여러 소스에서 대조하는 **cross-source contract consistency** (분류 5종 · BLOCKED 사유 코드 · 고정 테스트 명령 · retry budget)
 - 점수와 분리된 **Critical Hard Gate**
 - `agent_type` 기반의 role별 Guard enforcement
-- Stop Gate 불변식 19개와 그 replay를 Audit의 D3가 다시 호출하는 구조
+- Stop Gate 불변식 21개와 그 replay를 Audit의 D3가 다시 호출하는 구조
 - retry budget과 Eval 종료 경로를 Audit 커버리지 판정에 결합
 - 배점·Critical 여부를 sha256으로 고정하는 `rubric_digest`
 - 33개 이진 check와 "모든 check는 반증 사례를 가진다"는 테스트 규율
@@ -675,7 +740,7 @@ Timeline이 핵심입니다. `state.json`만으로는 전이를 그릴 수 없�
 
 호출되지 않은 Agent는 빈칸으로 두지 않습니다. EVAL-003의 Reviewer 미호출은 Harness가 멈춘 것이 아니라 `ENVIRONMENT_ERROR` 라우팅 규칙대로 부르지 않은 것이고, `eval-result.md`가 그 부재를 자동 검증 항목으로 판정해 두었습니다. 대시보드는 그 판정을 읽어 **"미호출 (자동 검증됨)"**으로 표시합니다.
 
-Overview 상단의 두 영역은 **의도적으로 분리**되어 있습니다. Audit의 98/100과 Eval의 147/147은 검사 대상이 다르므로 합산하지 않고, 하나를 다른 하나의 근거로 쓰지도 않습니다.
+Overview 상단의 두 영역은 **의도적으로 분리**되어 있습니다. Audit의 98/100과 Eval의 235/235는 검사 대상이 다르므로 합산하지 않고, 하나를 다른 하나의 근거로 쓰지도 않습니다.
 
 `dashboard/`는 Harness 영역도 수정 대상 영역도 아닌 **읽기 전용 소비자**입니다. `reports/examples/` 와 `reports/audit/latest.json` 을 읽기만 하고, `evals/eval_harness.py` 나 `evals/harness_audit.py` 를 import하지 않으며(같은 파일 계약을 독립 구현), Python 의존성을 추가하지 않습니다. 자세한 내용은 [`dashboard/README.md`](dashboard/README.md)에 있습니다.
 
@@ -706,7 +771,7 @@ patchpilot/
 │   ├── eval_harness.py           실행 검증 — setup / inject / assert / finish / teardown / promote / selftest
 │   ├── harness_audit.py          구조 검증 — 7 Category · 33 check · 100점
 │   ├── tests/                    Hook · Audit 판정 로직 단위 검증
-│   ├── fixtures/                 Eval 전용 Task 4종 + 제품 모듈·테스트
+│   ├── fixtures/                 Eval 전용 Task 6종 + 제품 모듈·테스트
 │   └── faults/                   결함 정의 6종
 │
 ├── reports/                      실행 산출물 (gitignore)
@@ -749,11 +814,10 @@ patchpilot/
 
 아직 구현하지 않은 항목입니다. 첫 항목은 현재 Harness Audit이 실제로 감점하고 있는 지점과 같습니다.
 
-**Eval 확장 — Audit check E4b (-2점)** — 현재 `PRODUCT_CODE_DEFECT` · `PLAN_DEFECT` · `ENVIRONMENT_ERROR` · `RETRY_BUDGET_EXCEEDED` 네 경로가 결정론적으로 검증되어 있습니다. 남은 경로는 다음과 같습니다.
+**Eval 확장 — Audit check E4b (-2점)** — 종료 경로 7개 중 6개가 결정론적으로 검증되어 있습니다. 남은 한 경로는 `UNKNOWN` 2회 종료(`UNKNOWN_TWICE`)입니다.
 
-- `TEST_DEFECT` Eval — 테스트를 자동 수정하지 않고 즉시 `BLOCKED` 처리되는지
-- `UNKNOWN` Eval — 1회만 추가 시도하고 두 번째 `UNKNOWN`에서 종료되는지
-- Reviewer `CHANGES_REQUESTED` Eval — 테스트가 PASS인 상태에서 리뷰 지적으로 재수정 루프가 도는지
+- `UNKNOWN`은 저장소 상태가 아니라 **Tester의 확신 부재**를 가리키는 fallback 분류라서, 특정 verdict를 강제하지 않고 저장소를 특정 상태에 놓는 것만으로는 유발할 수 없습니다. verdict를 지시하면 검증 대상이던 Agent의 분류 능력이 검증에서 빠지므로, 결정론적 Live Eval을 만드는 대신 **미검증 상태를 그대로 남겼습니다.** 라우팅 계약과 Stop Gate 불변식 `G20` · `G21`은 구현되어 있습니다. ([상세](#7-unknown-2회--미검증-경로))
+- 이 경로를 검증 가능하게 만들려면 `UNKNOWN`의 정의 자체를 저장소 상태로 판정 가능한 조건으로 좁혀야 하고, 그것은 `CLAUDE.md §14` · `§20`의 분류 계약 변경이라 이번 범위 밖입니다
 
 **Eval 격리** — HARNESS-EVAL-003에서 드러난 한계입니다.
 
@@ -788,12 +852,12 @@ PatchPilot에서 중요하게 다룬 것은 AI가 코드를 얼마나 많이 생
 | **최소 권한** | Agent별 도구 권한 축소. Developer는 테스트를 실행할 수 없음 |
 | **상태 머신** | `PLANNING → DEVELOPING → TESTING → REVIEWING → DONE`, 종료 상태는 `SUCCESS` / `BLOCKED` 둘뿐 |
 | **명시적 Artifact** | 숨겨진 대화가 아니라 `reports/<run-id>/` 파일로만 인계 |
-| **종료 정합성 대조** | `Stop` Hook에서 종료 선언과 산출물의 불변식 19개를 대조. 재진입 신호(`stop_hook_active`)로 prompt당 최대 1회만 차단 |
+| **종료 정합성 대조** | `Stop` Hook에서 종료 선언과 산출물의 불변식 21개를 대조. 재진입 신호(`stop_hook_active`)로 prompt당 최대 1회만 차단 |
 | **자동 테스트** | 고정 명령으로 전체 테스트 실행. 부분 실행 후 통과 선언 차단 |
 | **실패 원인 분류** | 5종 분류에 따라 행선지가 달라짐. 모든 실패를 같은 방식으로 재시도하지 않음 |
 | **Retry Budget** | 실행 전체에서 3회 공유. 예산을 다 쓰면 성공으로 위장하지 않고 `BLOCKED` — 실제 실행으로 검증 |
 | **Fault Injection** | Agent의 실수를 기다리지 않고 결함을 주입해 실패 경로를 강제 실행. 재주입 전 이전 결함 제거 여부를 확인 |
-| **결정론적 Eval** | 4개 종료 경로를 결함 주입으로 강제 실행. 시나리오별 27~55개 항목 자동 판정 |
+| **결정론적 Eval** | 종료 경로 7개 중 6개를 결함 주입으로 강제 실행. 시나리오별 27~57개 항목 자동 판정 |
 | **구조 계약 감사** | 저장소가 선언한 통제 계약을 33개 이진 check로 채점. 점수와 별개로 Critical Hard Gate가 verdict를 결정 |
 | **감사 도구의 반증 가능성** | 33개 check 전부가 FAIL을 만들어내는 테스트를 가짐. 현재 자기 저장소 점수도 만점이 아닌 98/100 |
 | **자동 복구 검증** | teardown 후 `sample-project/`가 실행 전과 완전히 동일한지 확인 |

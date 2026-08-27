@@ -1050,7 +1050,7 @@ def check_d2(repo: Repo) -> Outcome:
 
 
 def check_d3(repo: Repo) -> Outcome:
-    """Stop Gate 불변식 G1~G19 를 보존된 증거에 오프라인으로 재적용한다.
+    """Stop Gate 불변식 G1~G21 을 보존된 증거에 오프라인으로 재적용한다.
 
     **판정을 재구현하지 않는다.** `guard_stop_gate.check_run()` 을 그대로 호출한다.
     같은 규칙의 판정 코드가 두 벌이 되면 그 순간부터 둘은 갈라진다.
@@ -1075,7 +1075,7 @@ def check_d3(repo: Repo) -> Outcome:
         if state.get("final_status") not in gate.FINAL_STATUSES:
             # check_run() 의 전제를 만족하지 못한다. 판단 불가는 FAIL 이다.
             problems.append(
-                "{0}: final_status={1!r} 이라 G1~G19 를 적용할 수 없습니다".format(
+                "{0}: final_status={1!r} 이라 G1~G21 을 적용할 수 없습니다".format(
                     name, state.get("final_status")
                 )
             )
@@ -1666,14 +1666,14 @@ RUBRIC: tuple[CheckSpec, ...] = (
         check_d2,
     ),
     CheckSpec(
-        "D3", "artifact-evidence", "Stop Gate 불변식 G1~G19 replay 위반 0건", 4,
+        "D3", "artifact-evidence", "Stop Gate 불변식 G1~G21 replay 위반 0건", 4,
         "CLAUDE.md §25",
         "대표 결과가 Stop Gate 불변식을 위반한다. 증거를 수정하지 말고 왜 어긋났는지 먼저 규명한다.",
         check_d3,
     ),
     CheckSpec(
         "D4", "artifact-evidence", "대표 결과 eval-result.md 첫 줄이 EVAL: PASS", 2,
-        "evals/README.md §8",
+        "evals/README.md §4-12",
         "FAIL 인 실행을 대표 결과로 두지 않는다. 검증에 통과한 실행만 승격한다.",
         check_d4,
     ),
@@ -1711,7 +1711,7 @@ RUBRIC: tuple[CheckSpec, ...] = (
     CheckSpec(
         "E4b", "eval-coverage", "종료 경로 7개 전부에 결정론적 eval 존재", 2,
         "CLAUDE.md §20",
-        "TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다.",
+        "검증되지 않은 종료 경로의 eval 시나리오를 추가한다. 현재 남은 것은 UNKNOWN 2회 경로 하나다.",
         check_e4b,
     ),
     CheckSpec(

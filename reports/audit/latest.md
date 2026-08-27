@@ -175,8 +175,8 @@ retry_budget = 3 이 4개 소스에서 일치
 
 - 계약: CLAUDE.md §14, §15
 - 근거:
-  - .claude/hooks/guard_stop_gate.py: STATUS=PASS / VERDICT=APPROVED, CHANGES_REQUESTED
-  - evals/eval_harness.py: STATUS=FAIL, PASS / VERDICT=APPROVED
+  - .claude/hooks/guard_stop_gate.py: STATUS=FAIL, PASS / VERDICT=APPROVED, CHANGES_REQUESTED
+  - evals/eval_harness.py: STATUS=FAIL, PASS / VERDICT=APPROVED, CHANGES_REQUESTED
   - dashboard/lib/parse.ts: STATUS=FAIL, PASS / VERDICT=(없음)
 
 ### D. Artifact & Evidence Contract
@@ -187,7 +187,7 @@ retry_budget = 3 이 4개 소스에서 일치
 
 - 계약: CLAUDE.md §12
 - 근거:
-  - 대표 결과 4건: EVAL-20260820-1318-HARNESS-EVAL-001, EVAL-20260820-1443-HARNESS-EVAL-002, EVAL-20260820-1554-HARNESS-EVAL-003, EVAL-20260820-1752-HARNESS-EVAL-004
+  - 대표 결과 6건: EVAL-20260820-1318-HARNESS-EVAL-001, EVAL-20260820-1443-HARNESS-EVAL-002, EVAL-20260820-1554-HARNESS-EVAL-003, EVAL-20260820-1752-HARNESS-EVAL-004, EVAL-20260827-1136-HARNESS-EVAL-005, EVAL-20260827-1219-HARNESS-EVAL-006
 
 #### D2 - PASS (3/3)
 
@@ -195,11 +195,11 @@ retry_budget = 3 이 4개 소스에서 일치
 
 - 계약: CLAUDE.md §19
 - 근거:
-  - 대표 결과 4건의 state.json 이 스키마와 enum 계약을 만족
+  - 대표 결과 6건의 state.json 이 스키마와 enum 계약을 만족
 
 #### D3 - PASS (4/4) **Critical**
 
-Stop Gate 불변식 G1~G19 replay 위반 0건
+Stop Gate 불변식 G1~G21 replay 위반 0건
 
 - 계약: CLAUDE.md §25
 - 근거:
@@ -208,14 +208,16 @@ Stop Gate 불변식 G1~G19 replay 위반 0건
   - EVAL-20260820-1443-HARNESS-EVAL-002: SUCCESS / 위반 0건
   - EVAL-20260820-1554-HARNESS-EVAL-003: BLOCKED / 위반 0건
   - EVAL-20260820-1752-HARNESS-EVAL-004: BLOCKED / 위반 0건
+  - EVAL-20260827-1136-HARNESS-EVAL-005: BLOCKED / 위반 0건
+  - EVAL-20260827-1219-HARNESS-EVAL-006: BLOCKED / 위반 0건
 
 #### D4 - PASS (2/2) **Critical**
 
 대표 결과 eval-result.md 첫 줄이 EVAL: PASS
 
-- 계약: evals/README.md §8
+- 계약: evals/README.md §4-12
 - 근거:
-  - 대표 결과 4건 모두 첫 줄이 'EVAL: PASS'
+  - 대표 결과 6건 모두 첫 줄이 'EVAL: PASS'
 
 #### D5 - PASS (1/1)
 
@@ -237,6 +239,8 @@ gitignore 가 실행 산출물을 무시하고 대표 결과를 보존
   - harness-eval-002: task + fixture 4개
   - harness-eval-003: task + fixture 4개
   - harness-eval-004: task + fixture 2개
+  - harness-eval-005: task + fixture 2개
+  - harness-eval-006: task + fixture 2개
 
 #### E2 - PASS (3/3)
 
@@ -248,6 +252,8 @@ gitignore 가 실행 산출물을 무시하고 대표 결과를 보존
   - harness-eval-002 -> reports/examples/EVAL-20260820-1443-HARNESS-EVAL-002
   - harness-eval-003 -> reports/examples/EVAL-20260820-1554-HARNESS-EVAL-003
   - harness-eval-004 -> reports/examples/EVAL-20260820-1752-HARNESS-EVAL-004
+  - harness-eval-005 -> reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005
+  - harness-eval-006 -> reports/examples/EVAL-20260827-1219-HARNESS-EVAL-006
 
 #### E3 - PASS (2/2)
 
@@ -259,6 +265,8 @@ eval-result.md 의 종합 수치와 표 행 수가 일치
   - EVAL-20260820-1443-HARNESS-EVAL-002: 37/37 항목 (표 37행)
   - EVAL-20260820-1554-HARNESS-EVAL-003: 28/28 항목 (표 28행)
   - EVAL-20260820-1752-HARNESS-EVAL-004: 55/55 항목 (표 55행)
+  - EVAL-20260827-1136-HARNESS-EVAL-005: 31/31 항목 (표 31행)
+  - EVAL-20260827-1219-HARNESS-EVAL-006: 57/57 항목 (표 57행)
 
 #### E4a - PASS (2/2)
 
@@ -266,8 +274,8 @@ eval-result.md 의 종합 수치와 표 행 수가 일치
 
 - 계약: CLAUDE.md §20
 - 근거:
-  - 검증된 종료 경로 4/7개
-  - ENVIRONMENT_ERROR, PLAN_DEFECT_REPLAN, PRODUCT_CODE_DEFECT_RETRY, RETRY_BUDGET_EXCEEDED
+  - 검증된 종료 경로 6/7개
+  - ENVIRONMENT_ERROR, PLAN_DEFECT_REPLAN, PRODUCT_CODE_DEFECT_RETRY, RETRY_BUDGET_EXCEEDED, REVIEW_CHANGES_REQUESTED_NO_BUDGET, TEST_DEFECT_NEEDS_HUMAN
 
 #### E4b - FAIL (0/2)
 
@@ -275,9 +283,9 @@ eval-result.md 의 종합 수치와 표 행 수가 일치
 
 - 계약: CLAUDE.md §20
 - 근거:
-  - 검증되지 않은 종료 경로 3개: REVIEW_CHANGES_REQUESTED_NO_BUDGET, TEST_DEFECT_NEEDS_HUMAN, UNKNOWN_TWICE
-  - 검증됨: ENVIRONMENT_ERROR, PLAN_DEFECT_REPLAN, PRODUCT_CODE_DEFECT_RETRY, RETRY_BUDGET_EXCEEDED
-- 조치: TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다.
+  - 검증되지 않은 종료 경로 1개: UNKNOWN_TWICE
+  - 검증됨: ENVIRONMENT_ERROR, PLAN_DEFECT_REPLAN, PRODUCT_CODE_DEFECT_RETRY, RETRY_BUDGET_EXCEEDED, REVIEW_CHANGES_REQUESTED_NO_BUDGET, TEST_DEFECT_NEEDS_HUMAN
+- 조치: 검증되지 않은 종료 경로의 eval 시나리오를 추가한다. 현재 남은 것은 UNKNOWN 2회 경로 하나다.
 
 #### E5 - PASS (2/2)
 
@@ -285,7 +293,7 @@ eval-result.md 의 종합 수치와 표 행 수가 일치
 
 - 계약: evals/README.md §11
 - 근거:
-  - 참조된 결함 모듈 6개 모두 존재: env_error_001, plan_defect_001, retry_001, retry_budget_001, retry_budget_002, retry_budget_003
+  - 참조된 결함 모듈 10개 모두 존재: env_error_001, plan_defect_001, retry_001, retry_budget_001, retry_budget_002, retry_budget_003, review_budget_001, review_budget_002, review_budget_003, test_defect_001
 
 #### E6 - PASS (2/2)
 
@@ -294,6 +302,7 @@ eval-result.md 의 종합 수치와 표 행 수가 일치
 - 계약: evals/README.md §3-12
 - 근거:
   - harness-eval-004: 연쇄 3개 모두 서로 다름
+  - harness-eval-006: 연쇄 3개 모두 서로 다름
 
 ### F. Documentation Consistency
 
@@ -331,8 +340,8 @@ README 권한 표가 Agent frontmatter 와 일치
 
 - 계약: CLAUDE.md §25
 - 근거:
-  - guard_stop_gate.py = G1~G19 (19개)
-  - 문서 주장 일치: README.md
+  - guard_stop_gate.py = G1~G21 (21개)
+  - 문서 주장 일치: CLAUDE.md, README.md
 
 ### G. Reproducibility & Automation
 
@@ -365,13 +374,11 @@ Audit 자기 검증 테스트와 rubric 무결성
 
 ## 다음 행동
 
-1. `E4b` (2점) - TEST_DEFECT / UNKNOWN 2회 / Reviewer CHANGES_REQUESTED 경로의 eval 시나리오를 추가한다.
+1. `E4b` (2점) - 검증되지 않은 종료 경로의 eval 시나리오를 추가한다. 현재 남은 것은 UNKNOWN 2회 경로 하나다.
 
 ## 경고 (점수 미반영)
 
-- **W-EVAL-ROUTES** 결정론적 eval 이 없는 종료 경로 3개
-  - REVIEW_CHANGES_REQUESTED_NO_BUDGET
-  - TEST_DEFECT_NEEDS_HUMAN
+- **W-EVAL-ROUTES** 결정론적 eval 이 없는 종료 경로 1개
   - UNKNOWN_TWICE
 
 ## Audit이 검사하지 않는 것
