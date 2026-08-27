@@ -2,7 +2,7 @@
 
 검사 대상은 두 층이다.
 
-1. `decide()` 의 순수 판정 — G1~G19 각각의 정상/위반 경계와 fail-open 조건.
+1. `decide()` 의 순수 판정 — G1~G21 각각의 정상/위반 경계와 fail-open 조건.
 2. `main()` 의 전달 계약 — 차단은 stdout JSON + exit 0 으로만 알리고,
    통과는 stdout 에 아무것도 쓰지 않는다.
 
@@ -384,6 +384,233 @@ def test_blocked_run_with_approved_review_blocks(guard_stop_gate, fake_root, jud
     decision, reason, _ = judge()
     assert decision == guard_stop_gate.DECISION_BLOCK
     assert "G19" in gids(reason)
+
+
+# ---------------------------------------------------------------------------
+# G20~G21 UNKNOWN_TWICE 계약
+#
+# `patchpilot.md §5` 의 UNKNOWN 분기는 `unknown_retry_used` 하나만 보고 갈라지므로,
+# 두 번의 UNKNOWN 이 1차·2차라는 보장이 없다. 그래서 여기서는 "정상" 을 한 모양으로
+# 두지 않고 **서로 다른 정상 경로 세 개** 를 모두 통과시켜야 한다는 것까지 확인한다.
+# 고정 숫자로 못박은 게이트였다면 그 중 둘이 오탐으로 막힌다.
+# ---------------------------------------------------------------------------
+
+
+def unknown_attempt(index, category="UNKNOWN", status="FAIL"):
+    return {
+        "n": index,
+        "change_log": "change-log-{0}.md".format(index),
+        "test_result": "test-result-{0}.md".format(index),
+        "status": status,
+        "failure_category": category,
+    }
+
+
+def unknown_twice_state(**overrides):
+    """1차·2차가 모두 UNKNOWN 인 가장 단순한 UNKNOWN_TWICE 종료."""
+    state = blocked_state(
+        blocked_reason="UNKNOWN_TWICE",
+        retry_count=1,
+        unknown_retry_used=True,
+        attempts=[unknown_attempt(1), unknown_attempt(2)],
+    )
+    state.update(overrides)
+    return state
+
+
+def test_unknown_twice_consistent_is_allowed(guard_stop_gate, fake_root, judge):
+    write_run(fake_root, unknown_twice_state(), blocked_files())
+    decision, reason, notes = judge()
+    assert decision == guard_stop_gate.DECISION_ALLOW
+    assert reason is None
+    assert notes == []
+
+
+def test_unknown_twice_with_gap_between_unknowns_is_allowed(guard_stop_gate, fake_root, judge):
+    """정상: 두 UNKNOWN 이 붙어 있지 않은 경로.
+
+    1차 PRODUCT_CODE_DEFECT(retry_count 1) -> 2차 UNKNOWN(retry_count 2) -> 3차 UNKNOWN.
+    `attempts` 는 3건이고 `retry_count` 는 2다. 게이트가 2 / 1 로 못박았다면 여기서
+    정상 종료를 막게 된다.
+    """
+    state = unknown_twice_state(
+        retry_count=2,
+        attempts=[
+            unknown_attempt(1, category="PRODUCT_CODE_DEFECT"),
+            unknown_attempt(2),
+            unknown_attempt(3),
+        ],
+    )
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_ALLOW
+    assert reason is None
+
+
+def test_unknown_twice_after_review_round_is_allowed(guard_stop_gate, fake_root, judge):
+    """정상: 중간에 Tester 가 통과해 Reviewer 가 CHANGES_REQUESTED 를 낸 경로.
+
+    `review.verdict` 가 남아 있어도 UNKNOWN_TWICE 로 끝날 수 있다. G19 가 금지하는 것은
+    `APPROVED` 뿐이므로 `CHANGES_REQUESTED` 는 막히면 안 된다.
+    """
+    state = unknown_twice_state(
+        retry_count=2,
+        attempts=[
+            unknown_attempt(1, category=None, status="PASS"),
+            unknown_attempt(2),
+            unknown_attempt(3),
+        ],
+        review={"verdict": "CHANGES_REQUESTED", "file": "review.md"},
+    )
+    files = blocked_files()
+    files["review.md"] = "VERDICT: CHANGES_REQUESTED\n"
+    write_run(fake_root, state, files)
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_ALLOW
+    assert reason is None
+
+
+def test_unknown_twice_without_unknown_retry_used_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 첫 UNKNOWN 이 없었다면 두 번째 분기에 들어갈 수 없다."""
+    write_run(fake_root, unknown_twice_state(unknown_retry_used=False), blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G20" in gids(reason)
+
+
+def test_unknown_twice_with_zero_retry_count_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 첫 UNKNOWN 은 예산을 1회 소비하므로 retry_count 가 0 일 수 없다."""
+    write_run(fake_root, unknown_twice_state(retry_count=0), blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G20" in gids(reason)
+
+
+def test_unknown_twice_with_single_attempt_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 시도가 하나면 UNKNOWN 이 두 번 나올 수 없다."""
+    state = unknown_twice_state(attempts=[unknown_attempt(1)])
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G21" in gids(reason)
+
+
+def test_unknown_twice_with_only_one_unknown_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 시도가 셋이어도 UNKNOWN 이 한 건뿐이면 이 경로가 아니다."""
+    state = unknown_twice_state(
+        retry_count=2,
+        attempts=[
+            unknown_attempt(1, category="PRODUCT_CODE_DEFECT"),
+            unknown_attempt(2, category="PRODUCT_CODE_DEFECT"),
+            unknown_attempt(3),
+        ],
+    )
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G21" in gids(reason)
+
+
+def test_unknown_twice_with_first_attempt_not_unknown_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 첫 시도가 PRODUCT_CODE_DEFECT 이고 UNKNOWN 이 하나뿐인 2시도 실행."""
+    state = unknown_twice_state(
+        attempts=[unknown_attempt(1, category="PRODUCT_CODE_DEFECT"), unknown_attempt(2)]
+    )
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G21" in gids(reason)
+
+
+def test_unknown_twice_with_last_attempt_not_unknown_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 종료를 촉발한 마지막 시도가 UNKNOWN 이 아니면 이 사유로 끝날 수 없다."""
+    state = unknown_twice_state(
+        retry_count=2,
+        attempts=[
+            unknown_attempt(1),
+            unknown_attempt(2),
+            unknown_attempt(3, category="PRODUCT_CODE_DEFECT"),
+        ],
+    )
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G21" in gids(reason)
+
+
+def test_unknown_twice_with_passing_last_attempt_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 마지막 시도가 PASS 면 실패 분류 자체가 없다."""
+    state = unknown_twice_state(
+        attempts=[unknown_attempt(1), unknown_attempt(2, category=None, status="PASS")]
+    )
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G21" in gids(reason)
+
+
+def test_unknown_twice_with_all_attempts_passing_blocks(guard_stop_gate, fake_root, judge):
+    """반증: 두 시도 모두 PASS 면 UNKNOWN 이 한 번도 없었다."""
+    state = unknown_twice_state(
+        attempts=[
+            unknown_attempt(1, category=None, status="PASS"),
+            unknown_attempt(2, category=None, status="PASS"),
+        ]
+    )
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_BLOCK
+    assert "G21" in gids(reason)
+
+
+def test_unknown_twice_does_not_reparse_test_result_files(guard_stop_gate, fake_root, judge):
+    """`CLAUDE.md §25` — 산출물에서 실패 원인 분류를 다시 파싱하지 않는다.
+
+    `test-result-N.md` 본문에 UNKNOWN 이 한 글자도 없어도, `state.json` 의 선언이
+    정합하면 통과해야 한다. 여기서 막힌다면 게이트가 두 번째 파서를 갖게 된 것이다.
+    """
+    files = blocked_files()
+    for index in (1, 2, 3):
+        files["test-result-{0}.md".format(index)] = (
+            "STATUS: FAIL\n\n## 실패 원인 분류\nPRODUCT_CODE_DEFECT\n"
+        )
+    write_run(fake_root, unknown_twice_state(), files)
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_ALLOW
+    assert reason is None
+
+
+def test_unknown_twice_with_non_list_attempts_is_not_judged(guard_stop_gate, fake_root, judge):
+    """타입이 계약과 다르면 판정하지 않는다. G21 은 침묵하고 G20 만 남는다."""
+    state = unknown_twice_state(attempts="세 번 시도했다")
+    write_run(fake_root, state, blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_ALLOW
+    assert reason is None
+
+
+def test_unknown_twice_reason_names_the_missing_evidence(guard_stop_gate, fake_root, judge):
+    """차단 메시지가 무엇이 어긋났는지 그대로 담는지 확인한다."""
+    state = unknown_twice_state(unknown_retry_used=False, attempts=[unknown_attempt(1)])
+    write_run(fake_root, state, blocked_files())
+    _, reason, _ = judge()
+    assert "unknown_retry_used" in reason
+    assert "UNKNOWN 1건" in reason
+    assert "state.json" in reason
+
+
+def test_other_blocked_reasons_do_not_trigger_unknown_twice_checks(
+    guard_stop_gate, fake_root, judge
+):
+    """`UNKNOWN_TWICE` 가 아닌 종료에는 G20~G21 이 붙지 않는다.
+
+    기존 `RETRY_BUDGET_EXCEEDED` 대표 상태는 `unknown_retry_used` 가 거짓이고
+    `attempts` 에 UNKNOWN 이 하나도 없다. 사유 코드 조건이 빠지면 곧바로 오탐이 된다.
+    """
+    write_run(fake_root, blocked_state(), blocked_files())
+    decision, reason, _ = judge()
+    assert decision == guard_stop_gate.DECISION_ALLOW
+    assert gids(reason) == set()
 
 
 # ---------------------------------------------------------------------------

@@ -79,11 +79,17 @@ REASON_RETRY_BUDGET_EXCEEDED = "RETRY_BUDGET_EXCEEDED"
 REASON_REVIEW_NO_BUDGET = "REVIEW_CHANGES_REQUESTED_NO_BUDGET"
 REASON_REVIEWER_INVALID = "REVIEWER_INVALID_VERDICT"
 REASON_PLANNER_NO_OUTPUT = "PLANNER_NO_OUTPUT"
+REASON_UNKNOWN_TWICE = "UNKNOWN_TWICE"
 
 # 기계 판정 대상 첫 줄. 해석하지 않고 완전 일치로만 비교한다.
 VERDICT_APPROVED = "VERDICT: APPROVED"
 VERDICT_CHANGES_REQUESTED = "VERDICT: CHANGES_REQUESTED"
 STATUS_PASS = "STATUS: PASS"
+
+# `state.json` 의 `attempts[]` 안에 들어가는 값. 산출물 첫 줄(`STATUS: FAIL`)과
+# 형태가 다르므로 상수를 따로 둔다. (`patchpilot.md §4-1`)
+ATTEMPT_STATUS_FAIL = "FAIL"
+CATEGORY_UNKNOWN = "UNKNOWN"
 
 PLAN_FILE = "plan.md"
 REVIEW_FILE = "review.md"
@@ -334,7 +340,7 @@ def _check_success(state: dict, artifacts: RunArtifacts) -> list:
 
 
 def _check_blocked(state: dict, artifacts: RunArtifacts) -> list:
-    """final_status == BLOCKED 일 때만 성립해야 하는 계약. (G14~G19)
+    """final_status == BLOCKED 일 때만 성립해야 하는 계약. (G14~G21)
 
     사유 코드마다 추가로 볼 수 있는 것은 "파일 존재" 와 "고정된 첫 줄" 뿐이다.
     실패 원인 분류처럼 Agent 가 쓰는 본문을 다시 파싱해야 하는 사유 코드는
@@ -403,6 +409,9 @@ def _check_blocked(state: dict, artifacts: RunArtifacts) -> list:
                 )
             )
 
+    if blocked_reason == REASON_UNKNOWN_TWICE:
+        violations.extend(_check_unknown_twice(state, evidence))
+
     if blocked_reason == REASON_PLANNER_NO_OUTPUT:
         if artifacts.exists(PLAN_FILE) is True:
             violations.append(
@@ -430,20 +439,113 @@ def _check_blocked(state: dict, artifacts: RunArtifacts) -> list:
     return violations
 
 
+def _check_unknown_twice(state: dict, evidence: str) -> list:
+    """`UNKNOWN_TWICE` 선언이 그 경로를 실제로 지나온 상태인지 대조한다. (G20~G21)
+
+    `patchpilot.md §5` 의 UNKNOWN 분기는 `unknown_retry_used` **하나만** 보고 갈라진다.
+
+        거짓 -> 참으로 바꾸고 retry_count += 1, 예산이 남으면 Developer 를 한 번 더 부른다
+        참   -> 그 자리에서 UNKNOWN_TWICE 로 끝낸다
+
+    따라서 이 사유로 끝냈다는 선언은 곧 "UNKNOWN 이 두 번 기록됐다" 는 주장이다.
+    그 주장과 `state.json` 이 스스로 적은 값이 어긋나면 결정론적 모순이다.
+
+    검사 범위를 좁게 잡은 이유가 두 가지 있다.
+
+    첫째, **고정 숫자와 비교하지 않는다.** 위 분기는 시도 번호를 보지 않으므로 두 번의
+    UNKNOWN 이 1차·2차라는 보장이 없다. 예를 들어 1차 `PRODUCT_CODE_DEFECT`(retry_count 1)
+    -> 2차 `UNKNOWN`(retry_count 2) -> 3차 `UNKNOWN` 도 정상 경로이며, 이때
+    `attempts` 는 3건이고 `retry_count` 는 2다. 중간에 Tester 가 통과해 Reviewer 가
+    `CHANGES_REQUESTED` 를 낸 실행도 마찬가지다. `attempts == 2` 나 `retry_count == 1`
+    로 못박으면 정상 종료를 막는 오탐이 된다.
+
+    둘째, **`test-result-N.md` 를 열어 실패 원인 분류를 다시 파싱하지 않는다.**
+    `CLAUDE.md §25` 가 `failure_category` 재파싱을 검사 대상에서 명시적으로 뺐다.
+    여기서 읽는 것은 Orchestrator 가 `state.json` 에 직접 적은 선언뿐이며, 이는 G15 가
+    `retry_count` 와 `retry_budget` 을 맞대 보는 것과 같은 층위다.
+
+    타입이 계약과 다르면 판정하지 않고 통과시킨다. G6 이 이미 그 사실을 note 로 남긴다.
+    """
+    violations = []
+
+    # G20 - 첫 UNKNOWN 이 실제로 있었다는 선언. 이 값이 참이 아니면 두 번째 분기 자체에
+    # 들어갈 수 없으므로, 거짓인데 UNKNOWN_TWICE 로 끝냈다는 것은 그 자체로 모순이다.
+    unknown_retry_used = state.get("unknown_retry_used")
+    if unknown_retry_used is not True:
+        violations.append(
+            Violation(
+                "G20",
+                "UNKNOWN_TWICE 이면 unknown_retry_used 가 true",
+                repr(unknown_retry_used),
+                evidence,
+            )
+        )
+
+    # 첫 UNKNOWN 은 예산을 1회 소비한다. (`CLAUDE.md §16`) 따라서 0 일 수 없다.
+    retry_count = state.get("retry_count")
+    if _is_integer(retry_count) and retry_count < 1:
+        violations.append(
+            Violation(
+                "G20",
+                "UNKNOWN_TWICE 이면 첫 UNKNOWN 이 예산을 소비해 retry_count >= 1",
+                "retry_count={0}".format(retry_count),
+                evidence,
+            )
+        )
+
+    attempts = state.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        return violations
+
+    # G21 - 두 번의 UNKNOWN 이 시도 기록에 남아 있는가. 개수만 세고 순서나 위치는 보지 않는다.
+    unknown_count = sum(
+        1
+        for item in attempts
+        if isinstance(item, dict) and item.get("failure_category") == CATEGORY_UNKNOWN
+    )
+    if unknown_count < 2:
+        violations.append(
+            Violation(
+                "G21",
+                "UNKNOWN_TWICE 이면 attempts 에 UNKNOWN 실패가 2건 이상",
+                "UNKNOWN {0}건 / 시도 {1}건".format(unknown_count, len(attempts)),
+                evidence,
+            )
+        )
+
+    # 종료를 촉발한 것은 마지막 Tester 결과다. `patchpilot.md §4-1` 은 라우팅 전에
+    # 이번 시도를 append 하도록 정하므로, 마지막 항목이 그 UNKNOWN 이어야 한다.
+    last = attempts[-1]
+    if isinstance(last, dict):
+        status = last.get("status")
+        category = last.get("failure_category")
+        if status != ATTEMPT_STATUS_FAIL or category != CATEGORY_UNKNOWN:
+            violations.append(
+                Violation(
+                    "G21",
+                    "UNKNOWN_TWICE 이면 마지막 시도가 FAIL / UNKNOWN",
+                    "status={0!r}, failure_category={1!r}".format(status, category),
+                    evidence,
+                )
+            )
+
+    return violations
+
+
 # 판정 결과 한 벌. `notes` 는 위반이 아니라 "판정하지 못하고 건너뛴 검사" 다.
 # 둘을 한 값으로 묶어야 호출자가 "위반 없음" 과 "검사하지 못함" 을 구분할 수 있다.
 CheckResult = namedtuple("CheckResult", "violations notes")
 
 
 def check_run(state: dict, run_dir: Path) -> CheckResult:
-    """종료 선언(`state`)을 `run_dir` 의 산출물과 대조한다. (G1~G19)
+    """종료 선언(`state`)을 `run_dir` 의 산출물과 대조한다. (G1~G21)
 
     Stop Gate 판정의 **공개 진입점**이다. 규칙은 하나도 갖고 있지 않고
     `_check_common` / `_check_success` / `_check_blocked` 를 그대로 호출해 결과만
     합치는 얇은 합류 지점이다.
 
     이 함수가 있는 이유는 `evals/harness_audit.py` 가 보존된 대표 결과를 검사할 때
-    G1~G19 를 다시 구현하지 않게 하기 위해서다. 같은 규칙의 판정 코드가 두 벌이
+    G1~G21 을 다시 구현하지 않게 하기 위해서다. 같은 규칙의 판정 코드가 두 벌이
     되면 그 순간부터 둘은 갈라진다. `_guard_common.plan_allowed_files()` 와
     `evals/tests/test_plan_parser_agreement.py` 가 이미 같은 이유로 존재한다.
 

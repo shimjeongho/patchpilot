@@ -382,7 +382,13 @@ def _drift_readme_tools(root: Path) -> None:
 
 
 def _drift_gid_claim(root: Path) -> None:
-    edit(root, "README.md", "G1~G19", "G1~G21")
+    """문서가 주장하는 불변식 개수를 구현과 어긋나게 만든다.
+
+    치환 대상은 **현재 구현의 최대 위반 ID** 여야 한다. Stop Gate 에 불변식을 더하면
+    이 값도 함께 옮겨야 하고, 잊으면 `edit` 이 치환 대상을 찾지 못해 즉시 실패한다.
+    그 실패가 "F4 의 반증 사례가 더 이상 반증이 아니다" 를 알려 주는 신호다.
+    """
+    edit(root, "README.md", "G1~G21", "G1~G19")
 
 
 def _delete_ci_workflow(root: Path) -> None:
