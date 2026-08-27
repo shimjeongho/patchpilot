@@ -1,0 +1,91 @@
+# PatchPilot 검증 CI.
+#
+# Harness 는 세 검증기가 서로 다른 층을 본다. (CLAUDE.md §26)
+#   - evals/tests          Hook 판정 로직의 단위 검증
+#   - eval_harness selftest 판정 코드의 replay 회귀
+#   - harness_audit        저장소 정지 상태 구조 계약
+# step 이름을 그 층 이름으로 두어, 실패한 층이 Actions 탭에서 바로 읽히게 한다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 산출물과 판정 메시지가 한국어라 러너 로케일에 관계없이 UTF-8 을 고정한다.
+  PYTHONUTF8: "1"
+
+jobs:
+  verify:
+    name: Harness 검증기
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Python 버전은 .python-version 이 단일 진실 소스다. (Audit check G2)
+      # --locked 는 uv.lock 이 pyproject.toml 과 어긋나면 동기화하지 않고 실패한다.
+      - name: 의존성 동기화
+        run: uv sync --locked
+
+      - name: 단위 — Hook 판정 로직
+        run: uv run pytest evals/tests -q
+
+      # 이후 검증 step 은 앞 단계가 실패해도 실행한다. 한 번의 실행에서 네 층의
+      # 상태를 모두 보기 위해서다. 취소된 실행에서는 돌지 않는다.
+      # 의존성 동기화 실패는 여기에 해당하지 않는다. 환경이 없으면 검증 자체가 성립하지 않는다.
+      - name: 제품 코드 테스트
+        if: ${{ !cancelled() }}
+        run: uv run pytest sample-project/tests -q
+
+      - name: 회귀 — 판정 코드 replay
+        if: ${{ !cancelled() }}
+        run: uv run python evals/eval_harness.py selftest
+
+      # 종료 코드 0 PASS / 1 FAIL / 2 Audit 수행 불가. (CLAUDE.md §26)
+      # --min-score 를 걸지 않는다. 임계값 미달을 게이트 위반으로 위장하지 않기 위해서다.
+      # --write 도 쓰지 않는다. 대표 결과 갱신은 사람의 명시적 행위다.
+      - name: 구조 — Harness Audit
+        if: ${{ !cancelled() }}
+        run: uv run python evals/harness_audit.py
+
+  # Python 쪽 검증이 전부 통과해도 latest.json 스키마 변경은 Dashboard 파서만
+  # 조용히 깨뜨린다. 그 언어 경계를 보는 층이 이 job 이다.
+  dashboard:
+    name: Dashboard typecheck / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: 의존성 설치
+        run: npm ci
+        working-directory: dashboard
+
+      - name: typecheck
+        run: npm run typecheck
+        working-directory: dashboard
+
+      - name: build
+        run: npm run build
+        working-directory: dashboard
