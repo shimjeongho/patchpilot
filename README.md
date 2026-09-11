@@ -1,19 +1,104 @@
 # 🔧 PatchPilot
 
-> **AI Coding Agent가 버그 수정 작업을 통제된 절차로 수행하도록 만드는 Harness Engineering 프로젝트**
+> **Claude Code의 Planner · Developer · Tester · Reviewer 서브에이전트가 버그 수정을 역할별로 나눠 수행하고, 산출물 파일 기반 판정과 재시도·중단 규칙으로 그 작업을 통제하는 개발 Harness**
 
-PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다. 버그 요구사항 하나를 입력하면 역할이 분리된 Agent들이 **계획 → 수정 → 테스트 → 실패 분석 → 재수정 → 리뷰 → 결과 보고** 과정을 정해진 상태 머신에 따라 수행합니다.
+버그 설명 파일 하나를 넣으면 네 Agent가 **계획 → 수정 → 테스트 → 리뷰**를 차례로 수행하고, 결과는 `SUCCESS` 또는 `BLOCKED` 둘 중 하나로 남습니다.
 
-이 저장소의 결과물은 "Claude Code로 개발한 애플리케이션"이 아니라 **"Claude Code Agent가 안정적으로 개발 작업을 수행하도록 만든 통제 구조"** 그 자체입니다. Agent가 무엇을 할 수 있고, 무엇을 판정할 권한이 있으며, 실패했을 때 어디로 가는지를 규칙·도구 권한·파일 소유권으로 정의했습니다.
+단계 순서와 분기 규칙은 절차서 [`.claude/commands/patchpilot.md`](.claude/commands/patchpilot.md)에 정의되어 있고, **메인 Claude Code 세션이 Orchestrator로서 이 절차를 읽고 따르며 Agent를 호출합니다.** 별도로 실행되는 상태 머신 코드는 없습니다. 그 대신 절차가 실제로 지켜지는지를 Python으로 작성한 Hook · 결함 주입 Eval · 정적 Audit이 따로 검증합니다.
 
-서로 다른 두 층으로 검증합니다. 두 수치는 검사 대상이 다르므로 합산하지 않습니다.
+수정 대상 코드는 정산 금액 분배를 다루는 작은 Python 패키지 [`sample-project/`](sample-project/)입니다.
+
+## 📥 입력 → 처리 → 출력
+
+```text
+입력     tasks/BUG-XXX.md                 버그 설명 · 재현 절차 · 기대 동작
+
+처리     Planner → Developer → Tester → Reviewer
+         Agent 사이의 인계는 대화가 아니라 아래 파일로만 합니다
+
+출력     수정된 코드                      sample-project/src/
+         + reports/<run-id>/
+             plan.md                Planner       원인 분석 · 수정 허용 파일 목록
+             change-log-N.md        Developer     N차 수정 내용과 근거
+             test-result-N.md       Tester        첫 줄 STATUS: PASS | FAIL + 실패 원인 분류
+             review.md              Reviewer      첫 줄 VERDICT: APPROVED | CHANGES_REQUESTED
+             report.md · state.json Orchestrator  최종 보고 · 상태 기록
+
+실패 시  실패 원인에 따라 재시도하거나 BLOCKED로 종료
+         재시도 예산은 실행 전체에서 3회를 공유합니다
+```
+
+## ⏱ 30초 Flow
+
+```mermaid
+flowchart TD
+    TASK["tasks/BUG-XXX.md"] --> PLAN["Planner<br/>plan.md"]
+    PLAN --> DEV["Developer<br/>change-log-N.md"]
+    DEV --> TEST["Tester<br/>test-result-N.md"]
+
+    TEST -->|"STATUS: PASS"| REV["Reviewer<br/>review.md"]
+    TEST -->|"STATUS: FAIL"| CAUSE{"실패 원인 분류"}
+
+    CAUSE -->|"TEST_DEFECT<br/>ENVIRONMENT_ERROR<br/>UNKNOWN 2회째"| BLOCKED
+    CAUSE -->|"PRODUCT_CODE_DEFECT<br/>PLAN_DEFECT<br/>UNKNOWN 1회째"| INC
+
+    REV -->|"VERDICT: APPROVED"| SUCCESS
+    REV -->|"VERDICT: CHANGES_REQUESTED"| INC
+
+    INC["① retry_count += 1"] --> CMP{"② retry_count &lt; retry_budget(3) ?"}
+    CMP -->|"예 · PLAN_DEFECT"| PLAN
+    CMP -->|"예 · PRODUCT_CODE_DEFECT<br/>UNKNOWN · CHANGES_REQUESTED"| DEV
+    CMP -->|"아니오"| BLOCKED
+
+    SUCCESS(["SUCCESS"])
+    BLOCKED(["BLOCKED<br/>사유 코드 기록 · 사람이 판단"])
+```
+
+- **예산은 항상 ① 먼저 증가하고 ② 그다음 비교합니다.** 예산이 3이면 Developer → Tester 반복은 최대 3회이고, 세 번째 실패 시점에 다음 Agent를 부르지 않고 `BLOCKED`로 끝납니다.
+- `TEST_DEFECT` · `ENVIRONMENT_ERROR`는 예산을 쓰지 않고 바로 멈춥니다. `UNKNOWN`은 한 번만 예산을 써서 재시도하고, 두 번째 `UNKNOWN`은 예산과 무관하게 `BLOCKED`(`UNKNOWN_TWICE`)입니다.
+- 각 분기는 메인 세션이 `test-result-N.md` · `review.md`의 **첫 줄 문자열**만 비교해 정합니다. Agent의 설명 문장은 판정 근거가 아닙니다.
+- 그림에서 생략한 것: 산출물 누락 · 첫 줄 형식 위반 · 계획 범위 위반으로 즉시 멈추는 `BLOCKED` 사유 8종(사유 코드 전체 13종은 [`patchpilot.md §10`](.claude/commands/patchpilot.md)), 그리고 종료 시점의 [Stop Gate](#-stop-gate--종료-직전-정합성-대조) 대조.
+
+## 🧭 핵심 설계 원칙
+
+1. **역할 분리** — 코드를 고친 Agent가 스스로 성공을 선언할 수 없습니다. Developer에게는 Bash가 없어 테스트를 실행할 수 없고, PASS/FAIL은 Tester만, 승인은 Reviewer만, 최종 상태는 Orchestrator만 정합니다.
+2. **산출물 기반 기계 판정** — 다음 단계는 산출물 파일 첫 줄(`STATUS:` / `VERDICT:`)의 문자열 비교로만 결정됩니다. "수정했습니다"라는 문장은 결과가 되지 않습니다.
+3. **제한된 재시도와 BLOCKED** — 모든 실패를 같은 방식으로 재시도하지 않습니다. 원인을 분류해 행선지를 정하고, 예산을 다 쓰거나 사람의 판단이 필요한 경우 성공으로 위장하지 않고 `BLOCKED`로 멈춥니다.
+4. **절차 준수를 따로 검증** — Hook이 Agent의 행동을 실시간으로 막고, Eval이 결함을 주입해 실패 경로를 실제로 지나가게 하며, Audit이 저장소가 선언한 통제 계약을 채점합니다. 이 Harness가 보장하는 것은 **절차와 증거이지 수정의 정확성이 아닙니다.**
+
+## 📖 용어
+
+- **Harness** — Agent의 역할 · 권한 · 판정 · 종료 규칙과, 그 규칙을 강제하고 검증하는 장치를 합친 것으로 이 저장소의 결과물입니다.
+- **Run** — `/patchpilot`으로 태스크 하나를 처음부터 끝까지 처리한 한 번의 실행이며, 산출물은 `reports/<run-id>/`에 남습니다.
+- **Eval** — Run 도중 코드에 결함을 의도적으로 주입해, 설계한 실패 · 재시도 · 종료 경로를 실제로 지나가는지 산출물로 자동 판정하는 실행 검증입니다(`evals/eval_harness.py`).
+- **Audit** — Agent를 실행하지 않고 저장소 파일만 읽어, 선언한 통제 계약이 갖춰져 있고 서로 모순되지 않는지 채점하는 정적 검증입니다(`evals/harness_audit.py`).
+- **Stop Gate** — Orchestrator가 종료를 선언할 때 `state.json`의 선언과 실제 산출물이 모순되면 종료를 한 번 막는 `Stop` Hook입니다.
+- **BLOCKED** — 성공 조건(최종 `STATUS: PASS` + `VERDICT: APPROVED`)을 채우지 못하고 멈춘 최종 상태로, 사유 코드와 함께 기록되어 사람의 판단을 요청합니다.
+
+## 📈 검증 결과
+
+2026-09-11 로컬(Windows 11 · Python 3.12 · uv)에서 직접 실행해 확인한 값입니다. Eval 수치는 새로 실행한 값이 아니라 `reports/examples/`에 보존된 대표 결과 6건의 `eval-result.md`에서 읽은 값이며, `selftest`가 이 6건을 현재 판정 코드로 다시 읽어 대조합니다.
+
+| 무엇을 | 명령 / 근거 | 결과 |
+| --- | --- | --- |
+| 제품 코드 테스트 | `uv run pytest sample-project/tests -q` | **57 passed** |
+| Harness 판정 로직 단위 테스트 | `uv run pytest evals/tests -q` | **472 passed, 2 skipped** — skip 2건은 이 환경에서 심볼릭 링크를 만들 수 없어 건너뛴 테스트 |
+| 판정 코드 replay | `uv run python evals/eval_harness.py selftest` | **63 / 63 PASS** — Windows 기본 콘솔에서는 `PYTHONUTF8=1` 필요 (아래) |
+| Harness Eval (실행 검증) | `reports/examples/*/eval-result.md` 6건 | **6 시나리오 · 235 / 235 항목** |
+| Harness Audit (구조 검증) | `uv run python evals/harness_audit.py` | **PASS · 98 / 100 · Critical 0** |
+
+> ⚠️ **Windows 주의** — Windows 기본 콘솔(cp949)에서 `selftest`를 그대로 실행하면 판정 결과를 출력하는 도중 `UnicodeEncodeError`로 중단되고 종료 코드 1을 반환합니다. 판정 실패가 아니라 출력 인코딩 문제이며, `PYTHONUTF8=1`을 설정하면 PASS합니다. CI는 워크플로에서 이 값을 고정하므로 이 문제가 드러나지 않습니다. 같은 콘솔에서 Audit은 판정과 종료 코드는 정상이지만 한글 출력이 깨질 수 있습니다.
+
+Audit과 Eval은 서로 다른 층을 봅니다. 두 수치는 검사 대상이 다르므로 합산하지 않습니다.
 
 | 검증 층 | 무엇을 보는가 | 현재 결과 |
 | --- | --- | --- |
 | **Harness Audit** (구조 검증) | 저장소가 선언한 통제 계약이 실제로 갖춰져 있고 서로 모순되지 않는가 | `PASS` · 98 / 100 · Critical 0 |
 | **Harness Eval** (실행 검증) | 결함을 주입했을 때 Harness가 실제로 어떤 상태 전이를 거치는가 | 6 시나리오 · 235 / 235 항목 |
 
-두 층의 검증기는 GitHub Actions에서도 자동 실행됩니다. `main` push · `main` 대상 PR · 수동 실행(`workflow_dispatch`)에서 단위 테스트 · `sample-project` 테스트 · `selftest` · Harness Audit이 돌고, Dashboard의 typecheck와 build가 별도 job으로 함께 돕니다. 러너는 `ubuntu-latest` 하나이므로 **CI 통과는 Linux 러너에서 검증기가 통과했다는 사실이며, 모든 실행 환경을 보장하지 않습니다.**
+**Audit이 100점이 아닌 이유.** 종료 경로 7개 중 6개는 결정론적 Eval로 검증했지만, `UNKNOWN` 2회 종료(`UNKNOWN_TWICE`)는 **의도적으로 미검증 상태로 남겼습니다.** `UNKNOWN`은 저장소 상태가 아니라 Tester의 확신 부재를 뜻하는 분류라서 결함 주입만으로는 유발할 수 없고, Tester에게 판정을 지시하면 검증하려던 분류 능력 자체가 검증에서 빠지기 때문입니다. 그래서 Audit check `E4b`의 −2점을 그대로 둡니다. ([상세](#7-unknown-2회--미검증-경로))
+
+세 검증기(단위 테스트 · `selftest` · Audit)와 `sample-project` 테스트는 GitHub Actions에서도 자동 실행됩니다. `main` push · `main` 대상 PR · 수동 실행(`workflow_dispatch`)에서 돌고, Dashboard의 typecheck와 build가 별도 job으로 함께 돕니다. 러너는 `ubuntu-latest` 하나이므로 **CI 통과는 Linux 러너에서 검증기가 통과했다는 사실이며, 모든 실행 환경을 보장하지 않습니다.**
 
 **🔗 Dashboard Live Demo — https://patchpilot-five.vercel.app**
 
@@ -25,7 +110,111 @@ PatchPilot은 Claude Code 위에 **Harness**를 설계한 프로젝트입니다.
 
 ---
 
+## 🚀 Quick Start
+
+### 준비물
+
+- [uv](https://docs.astral.sh/uv/) — `.python-version`(3.12)과 `uv.lock` 기준으로 Python 환경을 맞춥니다
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `/patchpilot`으로 Harness를 실제로 실행할 때만 필요합니다
+- Node.js — Dashboard를 로컬에서 띄울 때만 필요합니다 (CI는 22 사용)
+
+### 1. 검증기 실행 — Claude Code 없이 가능
+
+```bash
+git clone https://github.com/shimjeongho/patchpilot.git
+cd patchpilot
+
+uv run pytest sample-project/tests -q                       # 제품 코드 테스트 (Tester가 쓰는 고정 명령) → 57 passed
+uv run pytest evals/tests -q                                # Hook · Audit · Eval 판정 로직 단위 검증
+PYTHONUTF8=1 uv run python evals/eval_harness.py selftest   # 판정 코드 replay 회귀 → EVAL: PASS (63/63)
+uv run python evals/harness_audit.py                        # 구조 계약 채점 → AUDIT: PASS · 98/100
+```
+
+Windows PowerShell에서는 `selftest` 전에 UTF-8 모드를 켭니다. 켜지 않으면 `UnicodeEncodeError`로 중단됩니다.
+
+```powershell
+$env:PYTHONUTF8 = "1"
+uv run python evals/eval_harness.py selftest
+```
+
+> 저장소 루트에서 인자 없이 `uv run pytest -q` 를 실행하면 수집 오류가 납니다. `sample-project/` 테스트의 import 경로 설정(`sample-project/pytest.ini` 의 `pythonpath = src`)은 `sample-project/tests` 를 지정해 실행할 때만 적용되고, `evals/fixtures/` 의 테스트는 **Eval `setup` 이 `sample-project/` 에 설치한 뒤에만** import가 성립하는 fixture이기 때문입니다. 그래서 위처럼 경로를 나누어 실행합니다. CI도 같은 방식으로 나누어 돕니다.
+
+### 2. Harness 실행 — Claude Code 필요
+
+Claude Code 세션에서 태스크 파일을 인자로 Orchestrator 절차를 실행합니다.
+
+```text
+/patchpilot tasks/BUG-001.md
+```
+
+> **이 명령은 현재 clone 상태에서 버그를 재현하는 데모가 아닙니다.** `tasks/BUG-001` ~ `BUG-004` 는 이미 Harness 실행으로 수정되어 그 결과가 커밋된 버그라서, 지금의 `sample-project/` 에는 해당 결함이 남아 있지 않습니다(위 57 passed). task 파일의 `상태: OPEN` 은 작성 당시의 표기입니다. 수정이 끝난 코드에 이 명령을 실행했을 때 어떤 결과가 나오는지는 이 저장소가 검증하지 않았습니다.
+
+실패 · 재시도 · `BLOCKED` 경로를 직접 재현하려면 Eval runbook을 따릅니다. `setup`으로 fixture를 설치하고, `/patchpilot` 절차 중 Developer와 Tester 사이에 `inject`를 넣고, `finish`로 자동 검증과 복구를 수행합니다. 전체 절차는 [`evals/README.md`](evals/README.md)에, 명령 요약은 아래 [Eval Architecture](#-eval-architecture) 절에 있습니다.
+
+---
+
+## 🎬 대표 실행 사례
+
+아래 두 사례는 저장소에 보존된 실제 Run 산출물입니다. 보존 폴더 이름은 `EVAL-…`이고 폴더 안 `state.json`의 `run_id`는 `RUN-…`입니다. 같은 실행이며, `promote`가 보존할 때 `RUN-` 접두어를 `EVAL-`로 바꿔 폴더를 만듭니다.
+
+### 사례 1 — 한 번 실패하고 재시도로 성공 · HARNESS-EVAL-001
+
+Developer 1차 수정 직후 Harness가 `tip.py`에 결함을 주입합니다. 어느 Agent에게도 이 사실을 알리지 않습니다.
+
+| 단계 | 산출물 | 보존 결과에서 확인되는 내용 |
+| --- | --- | --- |
+| Planner | `plan.md` | 수정 허용 파일은 `sample-project/src/expense/tip.py` 1개 |
+| Developer 1차 | `change-log-1.md` | `split_tip` 계산 로직(팁 기준 · 계산 순서 · 배분 방식) 수정 |
+| (Harness) | `fault-injection.md` | 결함 `retry_001` 주입 — 마지막 사람의 몫을 0으로 만드는 후처리 |
+| Tester 1차 | `test-result-1.md` | `STATUS: FAIL` · 8 failed, 62 passed · `PRODUCT_CODE_DEFECT` |
+| Orchestrator | `state.json` `attempts[0]` | `retry_count` 0 → 1, 1 < 3 이므로 Developer 재호출 |
+| Developer 2차 | `change-log-2.md` | `test-result-1.md`를 근거로 재진단 — `split_tip(10000, 1, 10)` 이 `[0]` 을 반환하므로 원인은 계산부가 아니라 뒤에 덧붙은 두 번째 정의 |
+| Tester 2차 | `test-result-2.md` | `STATUS: PASS` · 70 passed |
+| Reviewer | `review.md` | `VERDICT: APPROVED` |
+| 최종 | `state.json` · `eval-result.md` | `SUCCESS` · retry 1 / 3 · 자동 검증 27 / 27 |
+
+실제 `state.json` 발췌:
+
+```json
+{
+  "run_id": "RUN-20260820-1318-HARNESS-EVAL-001",
+  "retry_count": 1,
+  "retry_budget": 3,
+  "attempts": [
+    { "n": 1, "status": "FAIL", "failure_category": "PRODUCT_CODE_DEFECT" },
+    { "n": 2, "status": "PASS", "failure_category": null }
+  ],
+  "review": { "verdict": "APPROVED", "file": "review.md" },
+  "final_status": "SUCCESS",
+  "blocked_reason": null
+}
+```
+
+산출물 전체: [`reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/)
+
+### 사례 2 — 테스트 모순을 고치지 않고 사람에게 넘김 · HARNESS-EVAL-005
+
+기존 테스트는 `apply_coupon(1000, 3) == [334, 333, 333]` 을, 주입된 테스트는 같은 입력에 `[333, 333, 334]` 를 요구합니다. 둘은 동시에 참일 수 없으므로 코드를 어떻게 고쳐도 통과할 수 없습니다.
+
+```text
+Planner → Developer 1차 → (테스트 결함 주입) → Tester 1차  STATUS: FAIL · 1 failed, 69 passed
+  → 분류 TEST_DEFECT → 재시도 없이 BLOCKED (blocked_reason = TEST_DEFECT_NEEDS_HUMAN) · retry 0 / 3
+  → Developer 2차 · Reviewer 미호출 (change-log-2.md · review.md 부재) · 자동 검증 31 / 31
+```
+
+Tester에게 `TEST_DEFECT`라는 분류를 알려주지 않았습니다. Harness는 테스트를 자동으로 고치지 않고 막혔다고 보고합니다.
+
+산출물 전체: [`reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/`](reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/) · 나머지 4개 Eval은 아래 [Fault Injection Eval](#-fault-injection-eval) 절에 있습니다.
+
+---
+
+> 여기부터는 설계 상세와 검증 증거입니다. 설계 동기 → Architecture · 권한 · Stop Gate → 운영 실행 결과와 시행착오 → Fault Injection Eval → Harness Audit → Dashboard 순서입니다.
+
+---
+
 ## 📌 왜 만들었는가
+
+이 저장소의 결과물은 "Claude Code로 개발한 애플리케이션"이 아니라 **"Claude Code Agent가 안정적으로 개발 작업을 수행하도록 만든 통제 구조"** 그 자체입니다. Agent가 무엇을 할 수 있고, 무엇을 판정할 권한이 있으며, 실패했을 때 어디로 가는지를 규칙·도구 권한·파일 소유권으로 정의했습니다.
 
 일반적인 AI Coding Agent 사용은 다음과 같습니다.
 
@@ -58,47 +247,7 @@ PatchPilot은 같은 작업을 다음 절차로 바꿉니다.
 
 ## 🏗 Harness Architecture
 
-```mermaid
-flowchart TD
-    TASK["Bug Task<br/>tasks/BUG-XXX.md"] --> PLAN
-
-    PLAN["Planner"]
-    DEV["Developer"]
-    TEST["Tester<br/>uv run pytest sample-project/tests -q"]
-    REV["Reviewer<br/>실제 git diff 검토"]
-
-    PLAN --> DEV --> TEST --> STATUS
-
-    subgraph ORC ["Orchestrator — 상태 전이 · 재시도 예산 · 최종 판정"]
-        direction TB
-        STATUS{"test-result-N.md 첫 줄"}
-        BUDGET{"재시도 예산 남음?"}
-        VERDICT{"review.md 첫 줄"}
-    end
-
-    STATUS -->|"STATUS: FAIL<br/>PRODUCT_CODE_DEFECT"| BUDGET
-    STATUS -->|"STATUS: FAIL<br/>TEST_DEFECT · ENVIRONMENT_ERROR"| BLOCKED
-    STATUS -->|"STATUS: PASS"| REV
-
-    BUDGET -->|"예 → retry_count += 1"| DEV
-    BUDGET -->|아니오| BLOCKED
-
-    REV --> VERDICT
-    VERDICT -->|"VERDICT: CHANGES_REQUESTED"| BUDGET
-    VERDICT -->|"VERDICT: APPROVED"| SUCCESS
-
-    SUCCESS(["SUCCESS"])
-    BLOCKED(["BLOCKED"])
-
-    PLAN -.->|plan.md| REPORTS
-    DEV -.->|change-log-N.md| REPORTS
-    TEST -.->|test-result-N.md| REPORTS
-    REV -.->|review.md| REPORTS
-    SUCCESS -.->|"report.md · state.json"| REPORTS
-    BLOCKED -.->|"report.md · state.json"| REPORTS
-
-    REPORTS[("reports/&lt;run-id&gt;/")]
-```
+전체 상태 전이는 상단 [30초 Flow](#-30초-flow) 그림이 [`patchpilot.md`](.claude/commands/patchpilot.md) §4~§8 의 분기를 그대로 옮긴 것입니다. 각 Agent가 남기는 산출물 파일은 아래 [파일 기반 Agent 통신](#-파일-기반-agent-통신) 절에 있습니다. 분기 판정은 메인 Claude Code 세션이 Orchestrator로서 절차서를 따라 수행하며, 분기를 실행하는 별도 코드는 없습니다.
 
 ### 실패 원인별 라우팅
 
@@ -238,22 +387,7 @@ Python 환경은 **uv**로 관리합니다.
 
 `uv` 실행 자체가 실패하거나 환경 동기화가 불가능한 경우는 제품 코드 결함이 아니라 `ENVIRONMENT_ERROR`로 분류되어, 재시도 예산을 소비하지 않고 즉시 `BLOCKED`로 종료됩니다.
 
-### 실행 방법
-
-```bash
-# 버그 태스크 하나를 Harness로 처리
-/patchpilot tasks/BUG-001.md
-
-# 제품 코드 테스트 (Tester가 쓰는 고정 명령)
-uv run pytest sample-project/tests -q
-
-# Harness 자체 검증
-uv run pytest evals/tests -q                    # Hook · Audit · Eval 판정 로직 단위 검증
-uv run python evals/eval_harness.py selftest    # 판정 코드 replay 회귀
-uv run python evals/harness_audit.py            # 구조 계약 채점
-```
-
-> 저장소 루트에서 인자 없이 `uv run pytest -q` 를 실행하면 수집 오류가 납니다. `evals/fixtures/` 의 테스트는 **Eval `setup` 이 `sample-project/` 에 설치한 뒤에만** import가 성립하는 fixture이기 때문입니다. 평소에 존재하지 않는 것이 정상이므로, 위 두 경로를 나누어 실행합니다. CI도 같은 방식으로 나누어 돕니다.
+실행 명령과 Windows에서의 `PYTHONUTF8=1` 주의사항은 상단 [Quick Start](#-quick-start)로 옮겼습니다.
 
 ---
 
@@ -272,7 +406,7 @@ uv run python evals/harness_audit.py            # 구조 계약 채점
 
 네 건 모두 `STATUS: PASS` + `VERDICT: APPROVED`로 `SUCCESS` 판정을 받았습니다.
 
-**그런데 여기서 문제가 드러났습니다.** 네 건 모두 `retry_count = 0`입니다. 즉 **재시도 상태 머신이 한 번도 실행되지 않았습니다.** 설계한 FAIL 라우팅, 재시도 예산, 재수정 루프는 코드로만 존재할 뿐 실제로 지나간 적이 없는 경로였습니다.
+**그런데 여기서 문제가 드러났습니다.** 네 건 모두 `retry_count = 0`입니다. 즉 **재시도 상태 머신이 한 번도 실행되지 않았습니다.** 설계한 FAIL 라우팅, 재시도 예산, 재수정 루프는 절차서(`patchpilot.md`)에만 존재할 뿐 실제로 지나간 적이 없는 경로였습니다.
 
 ---
 
@@ -304,7 +438,7 @@ Developer가 정상적으로 수정을 끝낸 직후 제품 코드에 결함을 
 
 ### 발견 1 — 재시도 예산의 off-by-one
 
-`RETRY_BUDGET_EXCEEDED` Eval(HARNESS-EVAL-004)을 설계하다가 **운영 상태 머신의 실제 결함**을 찾았습니다.
+`RETRY_BUDGET_EXCEEDED` Eval(HARNESS-EVAL-004)을 설계하다가 **운영 상태 전이 규칙(`patchpilot.md`)의 실제 결함**을 찾았습니다.
 
 기존 라우팅은 이 순서였습니다.
 
@@ -573,7 +707,7 @@ fixture는 `sample-project/`에 **평소에 존재하지 않습니다.** `setup`
 Eval에는 **Eval 전용 예외 분기가 없습니다.**
 
 - `.claude/agents/*.md` 4개는 Eval을 위해 한 줄도 변경되지 않았습니다. Agent는 자신이 Eval 중이라는 사실을 모른 채 평소와 동일한 규칙으로 동작합니다.
-- `.claude/commands/patchpilot.md`도 "특정 Eval을 통과시키기 위한" 수정은 하지 않았습니다. 다만 Eval이 **운영 상태 머신의 실제 결함**을 두 건 드러냈고, 그 수정은 모든 실행에 적용되는 일반 규칙으로 반영했습니다. (아래 시행착오 참조)
+- `.claude/commands/patchpilot.md`도 "특정 Eval을 통과시키기 위한" 수정은 하지 않았습니다. 다만 Eval이 **운영 상태 전이 규칙의 실제 결함**을 두 건 드러냈고, 그 수정은 모든 실행에 적용되는 일반 규칙으로 반영했습니다. (아래 시행착오 참조)
 - Eval 실행 절차는 별도 커맨드를 만들지 않고 `evals/README.md`의 runbook으로 두었습니다. Orchestrator는 `.claude/commands/patchpilot.md`의 상태 머신을 그대로 따르되, Developer와 Tester 사이에 `inject` 단계만 끼워 넣습니다. 운영 경로 자체를 검증 대상으로 두기 위한 선택입니다.
 
 ### 실행 명령
@@ -863,7 +997,7 @@ PatchPilot에서 중요하게 다룬 것은 AI가 코드를 얼마나 많이 생
 | --- | --- |
 | **Agent 역할 분리** | 계획·구현·검증·리뷰를 4개 Agent로 분리, 판정 권한을 각각 독점 |
 | **최소 권한** | Agent별 도구 권한 축소. Developer는 테스트를 실행할 수 없음 |
-| **상태 머신** | `PLANNING → DEVELOPING → TESTING → REVIEWING → DONE`, 종료 상태는 `SUCCESS` / `BLOCKED` 둘뿐 |
+| **상태 전이 규칙** | `patchpilot.md`에 정의된 `PLANNING → DEVELOPING → TESTING → REVIEWING → DONE`을 메인 세션이 Orchestrator로서 따름. 종료 상태는 `SUCCESS` / `BLOCKED` 둘뿐 |
 | **명시적 Artifact** | 숨겨진 대화가 아니라 `reports/<run-id>/` 파일로만 인계 |
 | **종료 정합성 대조** | `Stop` Hook에서 종료 선언과 산출물의 불변식 21개를 대조. 재진입 신호(`stop_hook_active`)로 prompt당 최대 1회만 차단 |
 | **자동 테스트** | 고정 명령으로 전체 테스트 실행. 부분 실행 후 통과 선언 차단 |
