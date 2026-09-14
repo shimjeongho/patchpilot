@@ -157,38 +157,71 @@ Claude Code 세션에서 태스크 파일을 인자로 Orchestrator 절차를 �
 
 아래 두 사례는 저장소에 보존된 실제 Run 산출물입니다. 보존 폴더 이름은 `EVAL-…`이고 폴더 안 `state.json`의 `run_id`는 `RUN-…`입니다. 같은 실행이며, `promote`가 보존할 때 `RUN-` 접두어를 `EVAL-`로 바꿔 폴더를 만듭니다.
 
-### 사례 1 — 한 번 실패하고 재시도로 성공 · HARNESS-EVAL-001
+### 사례 1 — 실패를 수정하고 검증하기 · HARNESS-EVAL-001
 
-Developer 1차 수정 직후 Harness가 `tip.py`에 결함을 주입합니다. 어느 Agent에게도 이 사실을 알리지 않습니다.
+> 실제 사용자 장애가 아니라 **결정론적 결함 주입(fault-injection) Eval**입니다. Harness가 실패 → 재시도 경로를 실제로 지나가는지 확인하려고, 첫 수정 직후 제품 코드에 일부러 결함을 넣었습니다. 아래 값은 모두 보존된 산출물에서 읽은 것입니다.
 
-| 단계 | 산출물 | 보존 결과에서 확인되는 내용 |
-| --- | --- | --- |
-| Planner | `plan.md` | 수정 허용 파일은 `sample-project/src/expense/tip.py` 1개 |
-| Developer 1차 | `change-log-1.md` | `split_tip` 계산 로직(팁 기준 · 계산 순서 · 배분 방식) 수정 |
-| (Harness) | `fault-injection.md` | 결함 `retry_001` 주입 — 마지막 사람의 몫을 0으로 만드는 후처리 |
-| Tester 1차 | `test-result-1.md` | `STATUS: FAIL` · 8 failed, 62 passed · `PRODUCT_CODE_DEFECT` |
-| Orchestrator | `state.json` `attempts[0]` | `retry_count` 0 → 1, 1 < 3 이므로 Developer 재호출 |
-| Developer 2차 | `change-log-2.md` | `test-result-1.md`를 근거로 재진단 — `split_tip(10000, 1, 10)` 이 `[0]` 을 반환하므로 원인은 계산부가 아니라 뒤에 덧붙은 두 번째 정의 |
-| Tester 2차 | `test-result-2.md` | `STATUS: PASS` · 70 passed |
-| Reviewer | `review.md` | `VERDICT: APPROVED` |
-| 최종 | `state.json` · `eval-result.md` | `SUCCESS` · retry 1 / 3 · 자동 검증 27 / 27 |
-
-실제 `state.json` 발췌:
-
-```json
-{
-  "run_id": "RUN-20260820-1318-HARNESS-EVAL-001",
-  "retry_count": 1,
-  "retry_budget": 3,
-  "attempts": [
-    { "n": 1, "status": "FAIL", "failure_category": "PRODUCT_CODE_DEFECT" },
-    { "n": 2, "status": "PASS", "failure_category": null }
-  ],
-  "review": { "verdict": "APPROVED", "file": "review.md" },
-  "final_status": "SUCCESS",
-  "blocked_reason": null
-}
+```text
+Task → Planner → Developer 1차 → [Eval이 결함 주입] → Tester FAIL (PRODUCT_CODE_DEFECT)
+     → retry_count 0 → 1 (budget 3) → Developer 2차 → Tester PASS → Reviewer APPROVED → SUCCESS
 ```
+
+**0. 입력 — 팁 정산에서 돈이 사라지는 버그** · [`HARNESS-EVAL-001.md`](evals/fixtures/HARNESS-EVAL-001.md)
+
+`split_tip(10000, 3, 10)` 이 `[3666, 3666, 3666]` 을 반환해 총액 11,000원 중 2원이 사라집니다. 기대값은 `[3667, 3667, 3666]` 입니다. Planner는 "내림이 두 번 일어나 나머지가 두 번 버려진다"고 진단하고 수정 허용 파일을 `tip.py` 하나로 제한했습니다. Developer 1차는 계획대로 계산부를 고쳤습니다.
+
+**1. 결함 주입** · [`fault-injection.md`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/fault-injection.md)
+
+Developer 1차가 끝난 직후 Eval Harness가 `tip.py` 끝에 아래 코드를 덧붙였습니다. `split_tip` 을 다시 정의해 마지막 사람의 몫을 0으로 덮어쓰는 결함입니다.
+
+```python
+# 마지막 사람은 팁 정산 대상에서 제외한다는 요구로 추가된 후처리. (ref: patchpilot-eval:retry_001)
+_split_tip_before_last_person_rule = split_tip
+
+
+def split_tip(bill: int, people: int, tip_percent: int) -> list[int]:
+    shares = _split_tip_before_last_person_rule(bill, people, tip_percent)
+    return shares[:-1] + [0]
+```
+
+<sub>Tester와 Developer에게 결함 주입 사실을 프롬프트로 직접 알리지 않았습니다. 다만 주입 코드에 Eval 판정용 표식 주석(`patchpilot-eval:retry_001`)이 남아 있어 완전한 blind 조건은 아닙니다.</sub>
+
+**2. 첫 검증 실패** · [`test-result-1.md`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/test-result-1.md)
+
+Tester가 평소와 같은 명령으로 전체 테스트를 실행했습니다. `STATUS: FAIL` · **8 failed, 62 passed** · 분류 **`PRODUCT_CODE_DEFECT`**
+
+| 입력 | 기대 | 실제 |
+| --- | --- | --- |
+| `split_tip(10000, 3, 10)` | `[3667, 3667, 3666]` | `[3667, 3667, 0]` |
+| `split_tip(10000, 1, 10)` | `[11000]` | `[0]` |
+
+앞쪽 값은 계획의 기대값과 정확히 맞고 마지막 값만 0입니다. Tester는 1차 계산부만 따로 호출해 기대값과 전부 일치함을 확인한 뒤, "테스트와 계획은 맞고 제품 코드에 계획에 없는 후처리가 있다"고 분류했습니다. **첫 검증은 실패했지만, 원인은 Developer 1차 수정이 아니라 그 직후 Eval이 의도적으로 주입한 결함이었습니다.**
+
+**3. 제한된 재시도** · [`change-log-2.md`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/change-log-2.md)
+
+Orchestrator가 재시도 예산 1회를 소비하고(`retry_count` 0 → 1, `retry_budget` 3) 분류에 따라 Developer를 다시 불렀습니다. Developer 2차는 이전 테스트 결과를 읽고 새 가설을 기록해야 합니다.
+
+> "1차 계산 로직이 틀린 것이 아니다. 인원이 1명인데 `[0]` 이 나오는 것은 나머지 배분 계산으로 설명할 수 없다." — `change-log-2.md` 요지
+
+후처리 블록만 삭제했고, 1차 계산부는 한 글자도 바꾸지 않았습니다.
+
+**4. 재검증** · [`test-result-2.md`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/test-result-2.md)
+
+`STATUS: PASS` · **70 passed** — 1차에서 실패한 8건이 모두 통과했고 다른 모듈의 회귀는 없습니다.
+
+<sub>70 = 기존 테스트 57 + Eval 동안에만 설치되는 `test_tip.py` 13. 위 [검증 결과](#-검증-결과)의 57 passed는 fixture가 없는 평소 상태의 수치입니다.</sub>
+
+**5. 독립 Review** · [`review.md`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/review.md)
+
+`VERDICT: APPROVED` — Reviewer는 Developer의 설명 대신 실제 파일을 대조했습니다. 주입 표식 잔존 0건, 테스트 파일은 원본과 동일(약화 없음), 계획 밖 파일 수정 0건.
+
+**6. 최종 결과** · [`state.json`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/state.json) · [`eval-result.md`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/eval-result.md)
+
+`final_status: SUCCESS` · retry **1 / 3** · **Eval 자동 검증 27 / 27 PASS**
+
+Eval 판정 도구가 산출물만 읽어 흐름 전체를 판정했습니다. 주입이 1차 수정 *뒤에* 일어났는지, 결함을 Harness가 아니라 Developer 2차가 제거했는지, 테스트가 약화되지 않았는지, 실행 후 `sample-project/` 가 원래대로 복구되었는지 등 27개 항목입니다.
+
+> **이 사례가 검증하는 것.** AI의 코딩 능력이 아니라 Harness의 통제 절차입니다 — 실패 감지 → 실패 원인 분류 → 재시도 예산 소비 → 올바른 Agent 재호출 → 재검증 → 독립 Reviewer 승인 → 최종 `SUCCESS` 판정. 보존된 대표 실행은 1회이며, 반복 실행에서의 재현성은 보존 증거로 확인하지 않았습니다.
 
 산출물 전체: [`reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/)
 
@@ -494,12 +527,7 @@ Eval은 결정론적이어야 하는데, **판정 코드가 Agent의 문장 표�
 
 #### 1. `PRODUCT_CODE_DEFECT` — HARNESS-EVAL-001
 
-```text
-Planner → Developer 1차 → Fault Injection → Tester 1차 FAIL
-  → PRODUCT_CODE_DEFECT → retry_count = 1
-  → Developer 2차(주입된 결함을 직접 진단·제거) → Tester 2차 PASS
-  → Reviewer APPROVED → SUCCESS
-```
+단계별 흐름과 산출물 인용은 위 [사례 1](#사례-1--실패를-수정하고-검증하기--harness-eval-001)에 있습니다. 여기서는 판정 수치만 정리합니다.
 
 | 항목 | 결과 |
 | --- | --- |
@@ -510,7 +538,7 @@ Planner → Developer 1차 → Fault Injection → Tester 1차 FAIL
 | Reviewer | `VERDICT: APPROVED` |
 | `state.json` | `final_status = SUCCESS`, `attempts` 2건 (`[0]` FAIL/`PRODUCT_CODE_DEFECT`, `[1]` PASS) |
 | 자동 검증 | **27 / 27 PASS** |
-| 재현성 | 동일 Eval 2회 실행, 같은 상태 전이 재현 |
+| 보존된 실행 | 대표 실행 1회 — 반복 실행에서의 재현성은 보존 증거로 확인하지 않음 |
 
 대표 결과: [`reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/`](reports/examples/EVAL-20260820-1318-HARNESS-EVAL-001/)
 
@@ -613,7 +641,7 @@ Developer 3차(C 제거) → 결함 D 주입 → Tester 3차 FAIL / PRODUCT_CODE
 | 자동 검증 | **31 / 31 PASS** |
 | 복구 | teardown 후 기존 테스트 **57 passed** |
 
-Tester에게 `TEST_DEFECT`라는 분류를 프롬프트로 알려주지 않았습니다. 분류는 Tester가 실행 결과만 보고 스스로 내린 것입니다.
+Tester에게 `TEST_DEFECT`라는 분류를 프롬프트로 알려주지 않았습니다. 분류의 주된 근거는 두 테스트가 동시에 참일 수 없다는 Tester 자신의 모순 분석이지만, Tester는 실패 테스트 위의 Eval 표식 주석(`patchpilot-eval:test_defect_001`)도 추가 근거로 적었습니다. 완전히 blind한 분류는 아닙니다.
 
 대표 결과: [`reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/`](reports/examples/EVAL-20260827-1136-HARNESS-EVAL-005/)
 
@@ -634,7 +662,7 @@ Tester에게 `TEST_DEFECT`라는 분류를 프롬프트로 알려주지 않았�
 | 자동 검증 | **57 / 57 PASS** |
 | 복구 | teardown 후 기존 테스트 **57 passed** |
 
-Reviewer에게 기대 판정을 알려주지 않았습니다. `VERDICT`는 Reviewer가 `git diff`만 보고 내린 것입니다.
+Reviewer에게 기대 판정을 알려주지 않았습니다. `VERDICT`는 Reviewer가 fixture 원본 대비 실제 변경분(`git diff --no-index`)과 파일 전문을 대조해 내린 것입니다.
 
 대표 결과: [`reports/examples/EVAL-20260827-1219-HARNESS-EVAL-006/`](reports/examples/EVAL-20260827-1219-HARNESS-EVAL-006/)
 
@@ -658,23 +686,13 @@ Reviewer에게 기대 판정을 알려주지 않았습니다. `VERDICT`는 Revie
 
 이 Eval에서 가장 중요한 원칙은 **`test-result-N.md`의 `STATUS:` 문자열을 임의로 `FAIL`로 바꾸지 않는다**는 것입니다. 그렇게 하면 검증되는 것은 문자열 처리 로직뿐이고, 실제 테스트 실행 경로는 여전히 검증되지 않습니다.
 
-대신 실제 제품 코드에 결함을 주입합니다. `evals/faults/retry_001.py`는 대상 모듈 끝에 후처리 래퍼를 덧붙여 반환값의 마지막 원소를 0으로 만듭니다.
+대신 실제 제품 코드에 결함을 주입합니다. `evals/faults/retry_001.py`는 대상 모듈 끝에 후처리 래퍼를 덧붙여 반환값의 마지막 원소를 0으로 만듭니다(주입 코드는 위 [사례 1](#사례-1--실패를-수정하고-검증하기--harness-eval-001)).
 
-```python
-# 마지막 사람은 팁 정산 대상에서 제외한다는 요구로 추가된 후처리. (ref: patchpilot-eval:retry_001)
-_split_tip_before_last_person_rule = split_tip
-
-
-def split_tip(bill: int, people: int, tip_percent: int) -> list[int]:
-    shares = _split_tip_before_last_person_rule(bill, people, tip_percent)
-    return shares[:-1] + [0]
-```
-
-- **실제 pytest가 실패합니다.** Tester는 평소와 동일하게 `uv run pytest sample-project/tests -q`를 실행하고 그 결과를 기록합니다. 결함이 주입되었다는 사실은 어느 Agent에게도 알리지 않습니다.
+- **실제 pytest가 실패합니다.** Tester는 평소와 동일하게 `uv run pytest sample-project/tests -q`를 실행하고 그 결과를 기록합니다. 결함 주입 사실을 Tester와 Developer에게 프롬프트로 직접 알리지 않습니다. 다만 주입 코드에는 판정용 표식 주석(`patchpilot-eval:<fault_id>`)이 남으므로 완전한 blind 조건은 아닙니다.
 - **주입이 결정론적입니다.** Developer 1차가 함수 본문을 어떻게 구현했든 모듈 최상위에 `def split_tip(` 정의만 있으면 동일하게 적용됩니다. 전제 조건이 깨지면 주입하지 않고 실패합니다.
 - **결함을 제거하는 주체는 Harness가 아니라 Developer 2차입니다.** Harness가 스스로 되돌리면 재수정 주체가 Developer가 아니게 되어 `FAIL → 분석 → 재수정 → PASS` 전이의 검증 의미가 사라집니다. 제거 여부는 결함 표식의 부재와 파일 해시 변경으로 자동 판정합니다.
 
-실제 2회 실행에서 Developer 2차는 `test-result-1.md`만 보고 스스로 원인을 특정했습니다. 두 번 모두 **`split_tip(10000, 1, 10)`이 `[11000]` 대신 `[0]`을 반환한다는 점**을 근거로 들었습니다. 인원이 1명이면 나머지 배분 계산으로는 몫이 0이 될 수 없으므로 결함이 계산부 밖에 있다는 추론입니다.
+보존된 실행에서 Developer 2차는 `test-result-1.md`를 근거로 원인을 특정했습니다. 핵심 근거는 **`split_tip(10000, 1, 10)`이 `[11000]` 대신 `[0]`을 반환한다는 점**입니다. 인원이 1명이면 나머지 배분 계산으로는 몫이 0이 될 수 없으므로 결함이 계산부 밖에 있다는 추론입니다.
 
 ---
 
@@ -706,7 +724,7 @@ fixture는 `sample-project/`에 **평소에 존재하지 않습니다.** `setup`
 
 Eval에는 **Eval 전용 예외 분기가 없습니다.**
 
-- `.claude/agents/*.md` 4개는 Eval을 위해 한 줄도 변경되지 않았습니다. Agent는 자신이 Eval 중이라는 사실을 모른 채 평소와 동일한 규칙으로 동작합니다.
+- `.claude/agents/*.md` 4개는 Eval을 위해 한 줄도 변경되지 않았습니다. Agent에게 Eval 중이라는 사실을 프롬프트로 알리지 않으며, Agent는 평소와 동일한 규칙으로 동작합니다. 다만 주입 코드의 표식 주석 등으로 Eval임을 인지할 수는 있습니다([한계](#-future-work)).
 - `.claude/commands/patchpilot.md`도 "특정 Eval을 통과시키기 위한" 수정은 하지 않았습니다. 다만 Eval이 **운영 상태 전이 규칙의 실제 결함**을 두 건 드러냈고, 그 수정은 모든 실행에 적용되는 일반 규칙으로 반영했습니다. (아래 시행착오 참조)
 - Eval 실행 절차는 별도 커맨드를 만들지 않고 `evals/README.md`의 runbook으로 두었습니다. Orchestrator는 `.claude/commands/patchpilot.md`의 상태 머신을 그대로 따르되, Developer와 Tester 사이에 `inject` 단계만 끼워 넣습니다. 운영 경로 자체를 검증 대상으로 두기 위한 선택입니다.
 
@@ -968,7 +986,7 @@ patchpilot/
 
 **Eval 격리** — HARNESS-EVAL-003에서 드러난 한계입니다.
 
-- Eval fixture와 fault 정의를 별도 sandbox 또는 git worktree로 격리 — 현재는 Agent가 저장소를 탐색하다 `evals/faults/` 나 `conftest.py` 를 읽고 결함 주입 가능성을 먼저 인지할 수 있어, Tester의 분류가 완전히 blind한 조건이 아닙니다
+- Eval fixture와 fault 정의를 별도 sandbox 또는 git worktree로 격리 — 현재는 Agent가 저장소를 탐색하다 `evals/faults/` 나 `conftest.py` 를 읽거나, 주입 코드에 남은 `patchpilot-eval` 표식 주석을 보고 결함 주입 가능성을 인지할 수 있어(EVAL-005 Tester는 이 표식을 분류의 추가 근거로 적었습니다), Agent의 판정이 완전히 blind한 조건이 아닙니다
 
 **Harness 강화**
 
