@@ -1,16 +1,13 @@
 [project]
 name = "patchpilot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Claude Code 서브에이전트로 버그 수정을 역할별로 나누고, 산출물 파일 기반 판정과 재시도·중단 규칙으로 통제하는 개발 Harness"
 readme = "README.md"
 authors = [
     { name = "shimjeongho", email = "shimjh0628@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = []
-
-[project.scripts]
-patchpilot = "patchpilot:main"
 
 [dependency-groups]
 dev = [
